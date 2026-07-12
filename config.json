@@ -1,0 +1,33 @@
+{
+  "engagements": [
+    {
+      "name": "NASA VDP",
+      "engagementCode": "nasa-vdp",
+      "enabled": true,
+      "platform": "bugcrowd",
+      "announcements": {
+        "enabled": true,
+        "lastAnnouncementId": null
+      },
+      "crowdStream": {
+        "enabled": true,
+        "minimumPriorityNumber": 3,
+        "filterBy": ["disclosures", "accepted"],
+        "lastReportId": null
+      },
+        "subdomainMonitor": {
+        "enabled": true,
+        "storeMode": true,
+        "subdomainsDirectory": "C:/Users/andre/OneDrive/Desktop/dev/bug_bounty/bugcrowd/NASA",
+        "screenshotEnabled": true,
+        "hideCodes": [404, 403, 500, 401, 503]
+      }
+    }
+  ],
+
+  "cronInterval": "* * * * *",
+  "notifications": {
+    "telegram": true,
+    "discord": false
+  }
+}
