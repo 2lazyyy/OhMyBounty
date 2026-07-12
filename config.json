@@ -18,7 +18,7 @@
         "subdomainMonitor": {
         "enabled": true,
         "storeMode": true,
-        "subdomainsDirectory": "C:/Users/andre/OneDrive/Desktop/dev/bug_bounty/bugcrowd/NASA",
+        "subdomainsDirectory": "/app/subdomains/nasa-vdp",
         "screenshotEnabled": true,
         "hideCodes": [404, 403, 500, 401, 503]
       }

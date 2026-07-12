@@ -376,7 +376,7 @@ async function readConfig() {
           //monitor crowdstream
           await checkCrowdStream(engagement);
         }
-        if (engagement.subdomainMonitor.enabled) {
+	if (engagement.subdomainMonitor.enabled && !process.env.SKIP_SUBDOMAINS) {
           await checkSubdomains(engagement);
         }
       }

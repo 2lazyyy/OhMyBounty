@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: omb-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: omb
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  monitor:
+    build: .
+    container_name: omb-monitor
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - SKIP_SUBDOMAINS=true
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DATABASE=omb
+    env_file:
+      - .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./utils.js:/app/utils.js:ro
+      - ./index.js:/app/index.js:ro
+      - ./screenshots:/app/screenshots
+    command: node index.js
+
+  scanner:
+    build: .
+    container_name: omb-scanner
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DATABASE=omb
+    env_file:
+      - .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - subdomains:/app/subdomains
+    command: node subdomain-scanner.js
+
+volumes:
+  mysql-data:
+  subdomains:
