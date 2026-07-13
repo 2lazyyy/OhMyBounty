@@ -8,18 +8,25 @@
       "targets": [
         {
           "name": "NASA main domain",
-          "domains": ["nasa.gov", "usgeo.gov", "globe.gov"]
+          "domains": [
+            "nasa.gov",
+            "usgeo.gov",
+            "globe.gov"
+          ]
         }
       ],
       "announcements": {
         "enabled": true,
-        "lastAnnouncementId": null
+        "lastAnnouncementId": "7bd8df56-e8e0-4110-b046-13ad269d2c8a"
       },
       "crowdStream": {
         "enabled": true,
         "minimumPriorityNumber": 3,
-        "filterBy": ["disclosures", "accepted"],
-        "lastReportId": null
+        "filterBy": [
+          "disclosures",
+          "accepted"
+        ],
+        "lastReportId": "73b8d47e-1e1c-444c-9281-b064377e967f"
       },
       "subdomainMonitor": {
         "enabled": true,
@@ -33,7 +40,7 @@
         ],
         "subdomainsDirectory": "/app/subdomains/nasa-vdp",
         "screenshotEnabled": true,
-        "hideCodes": [404, 403, 500, 401, 503]
+        "hideCodes": [404,403,500,401,503]
       },
       "jsRecon": {
         "enabled": true,
@@ -42,7 +49,6 @@
       }
     }
   ],
-
   "cronInterval": "*/15 * * * *",
   "notifications": {
     "telegram": true,

@@ -81,6 +81,100 @@ async function ensureDatabase() {
   await conn.end();
 }
 
+// Extract clean domain from various tool output formats
+function extractDomain(line) {
+  if (!line || typeof line !== 'string') return null;
+  
+  let value = line.trim();
+  
+  // Remove https:// or http:// prefix
+  value = value.replace(/^https?:\/\//i, '');
+  
+  // Handle amass output: "domain.com (FQDN) --> relation --> target.com (FQDN)"
+  // Extract the last domain-like token before any (TYPE) annotation
+  const amassMatch = value.match(/([a-zA-Z0-9][a-zA-Z0-9\-_]*\.[a-zA-Z0-9][a-zA-Z0-9\-_]*\.[a-zA-Z]{2,})(?:\s*\([^)]+\))?$/);
+  if (amassMatch) {
+    value = amassMatch[1];
+  }
+  
+  // Remove any trailing path, query params, or fragments
+  value = value.split('/')[0].split('?')[0].split('#')[0];
+  
+  // Remove port if present
+  value = value.replace(/:\d+$/, '');
+  
+  return value.trim().toLowerCase();
+}
+
+function isValidSubdomain(value) {
+  if (!value || typeof value !== 'string') return false;
+  
+  const trimmed = value.trim();
+  if (trimmed.length < 3 || trimmed.length > 253) return false;
+  
+  // Reject email addresses
+  if (trimmed.includes('@')) return false;
+  if (trimmed.toLowerCase().startsWith('mailto:')) return false;
+  
+  // Reject anything with spaces
+  if (/\s/.test(trimmed)) return false;
+  
+  // Reject IP addresses (v4 and v6)
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(trimmed)) return false;
+  if (/^[\da-fA-F:]+$/.test(trimmed) && trimmed.includes(':')) return false; // IPv6 heuristic
+  
+  // Reject netblocks (contains /)
+  if (trimmed.includes('/')) return false;
+  
+  // Reject ASN entries
+  if (/\(\s*ASN\s*\)/i.test(trimmed)) return false;
+  if (/^\d+\s+\(ASN\)/i.test(trimmed)) return false;
+  
+  // Reject anything with parentheses (amass metadata)
+  if (/\([^)]+\)/.test(trimmed)) return false;
+  
+  // Must contain at least one dot (domain.tld)
+  if (!trimmed.includes('.')) return false;
+  
+  // Must look like a valid domain
+  // Each label: starts with alphanumeric, ends with alphanumeric, can contain hyphens in middle
+  // TLD: at least 2 chars, only letters
+  const parts = trimmed.split('.');
+  if (parts.length < 2) return false;
+  
+  const tld = parts[parts.length - 1];
+  if (!/^[a-zA-Z]{2,}$/.test(tld)) return false;
+  
+  for (const part of parts) {
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?$/.test(part) && part !== '*') {
+      return false;
+    }
+  }
+  
+  // Reject common false positive patterns
+  const lower = trimmed.toLowerCase();
+  if (lower.includes('(netblock)') || lower.includes('(ipaddress)') || 
+      lower.includes('(fqdn)') || lower.includes('(asn)')) return false;
+  
+  return true;
+}
+
+async function getAllTxtFiles(dir) {
+  const files = [];
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...await getAllTxtFiles(fullPath));
+      } else if (entry.isFile() && path.extname(entry.name) === '.txt') {
+        files.push(fullPath);
+      }
+    }
+  } catch (e) {}
+  return files;
+}
+
 function getEngagementDomains(engagement) {
   const domains = new Set();
   if (Array.isArray(engagement.targets)) {
@@ -153,12 +247,7 @@ async function processSubdomainFiles() {
     if (!engagement.enabled || !engagement.subdomainMonitor?.enabled) continue;
 
     const outputDir = engagement.subdomainMonitor.subdomainsDirectory;
-    let files;
-    try {
-      files = await fs.readdir(outputDir);
-    } catch (e) { continue; }
-
-    const txtFiles = files.filter(f => path.extname(f) === '.txt');
+    const txtFiles = await getAllTxtFiles(outputDir);
     if (txtFiles.length === 0) continue;
 
     console.log(pc.yellow(`[i] ${engagement.name}: ${txtFiles.length} file(s) to process`));
@@ -179,15 +268,29 @@ async function processSubdomainFiles() {
       )
     `);
 
-    for (const file of txtFiles) {
-      const filePath = path.resolve(outputDir, file);
+    for (const filePath of txtFiles) {
       const data = await fs.readFile(filePath, 'utf-8');
-      const subdomains = data.split('\n')
-        .map(s => s.trim().replace(/\r?\n|\r/g, ' ').replace(/^https?:\/\//, ''))
-        .filter(s => s.length > 2);
+      
+      // Extract and validate each line
+      const rawLines = data.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      const subdomains = [];
+      for (const line of rawLines) {
+        const extracted = extractDomain(line);
+        if (extracted && isValidSubdomain(extracted)) {
+          subdomains.push(extracted);
+        } else {
+          console.log(pc.gray(`[-] Filtered out: ${line.slice(0, 80)}`));
+        }
+      }
+      
+      // Deduplicate
+      const uniqueSubdomains = [...new Set(subdomains)];
 
       let newCount = 0;
-      for (const subdomain of subdomains) {
+      for (const subdomain of uniqueSubdomains) {
         const [rows] = await conn.query(
           `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
           [subdomain]
@@ -196,12 +299,17 @@ async function processSubdomainFiles() {
           console.log(pc.green(`[+] New: ${subdomain}`));
           newCount++;
 
-          if (config.notifications.telegram) {
-            const msg = `<b>🌐 New subdomain in ${engagement.name}</b>\n\n• <code>${subdomain}</code>\n• <i>Found by scanner</i>\n• <i>${new Date().toISOString()}</i>`;
-            await sendTelegram(msg);
-          }
-          if (config.notifications.discord) {
-            await sendDiscord(`New subdomain in ${engagement.name}`, subdomain);
+          // Only notify if NOT in storeMode
+          if (!engagement.subdomainMonitor.storeMode) {
+            if (config.notifications.telegram) {
+              const msg = `<b>🌐 New subdomain in ${engagement.name}</b>\n\n• <code>${subdomain}</code>\n• <i>Found by scanner</i>\n• <i>${new Date().toISOString()}</i>`;
+              await sendTelegram(msg);
+            }
+            if (config.notifications.discord) {
+              await sendDiscord(`New subdomain in ${engagement.name}`, subdomain);
+            }
+          } else {
+            console.log(pc.yellow(`[+] Storing (storeMode): ${subdomain}`));
           }
 
           await conn.query(
@@ -209,10 +317,13 @@ async function processSubdomainFiles() {
             [subdomain]
           );
 
-          try {
-            await scanNewSubdomain(engagement, subdomain);
-          } catch (e) {
-            console.log(pc.red(`[!] JS recon failed for ${subdomain}: ${e.message}`));
+          // JS recon only if enabled
+          if (engagement.jsRecon?.enabled) {
+            try {
+              await scanNewSubdomain(engagement, subdomain);
+            } catch (e) {
+              console.log(pc.red(`[!] JS recon failed for ${subdomain}: ${e.message}`));
+            }
           }
         }
       }

@@ -10,16 +10,49 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SECRET_PATTERNS = [
-  { name: 'AWS Access Key ID', regex: /AKIA[0-9A-Z]{16}/g },
-  { name: 'AWS Secret Access Key', regex: /(?<![A-Za-z0-9])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/g },
-  { name: 'AWS Session Token', regex: /(?:aws_session_token|AWS_SESSION_TOKEN)\s*[=:]\s*[A-Za-z0-9/+=]{16,}/gi },
-  { name: 'S3 Bucket', regex: /([a-z0-9.-]{3,255}\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com)|s3[.-]([a-z0-9-]+)\.amazonaws\.com/gi },
-  { name: 'Google API Key', regex: /AIza[0-9A-Za-z\-_]{35}/g },
-  { name: 'Slack Token', regex: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
-  { name: 'Private Key', regex: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/g },
-  { name: 'Basic Auth', regex: /(?:username|user|login|password|pwd|pass)\s*[:=]\s*['\"]?[^'\"\s]{3,80}/gi },
-  { name: 'Bearer Token', regex: /Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*/g },
-  { name: 'JWT Token', regex: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g }
+  { 
+    name: 'AWS Access Key ID', 
+    regex: /AKIA[0-9A-Z]{16}/g,
+    validate: (match) => /^AKIA[0-9A-Z]{16}$/.test(match)
+  },
+  { 
+    name: 'AWS Secret Access Key', 
+    regex: /(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/g,
+    validate: (match) => /[A-Z]/.test(match) && /[a-z]/.test(match) && /[0-9]/.test(match) && /[/+=]/.test(match)
+  },
+  { 
+    name: 'Google API Key', 
+    regex: /AIza[0-9A-Za-z\-_]{35}/g,
+    validate: (match) => /^AIza[0-9A-Za-z\-_]{35}$/.test(match)
+  },
+  { 
+    name: 'Slack Token', 
+    regex: /xox[baprs]-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24,}/g,
+    validate: (match) => match.length > 50
+  },
+  { 
+    name: 'Private Key', 
+    regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g,
+    validate: () => true
+  },
+  { 
+    name: 'GitHub Token', 
+    regex: /ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|ghu_[A-Za-z0-9]{36}|ghs_[A-Za-z0-9]{36}|ghr_[A-Za-z0-9]{36}/g,
+    validate: (match) => match.length === 40
+  },
+  { 
+    name: 'Stripe Key', 
+    regex: /sk_(live|test)_[A-Za-z0-9]{24,}/g,
+    validate: (match) => match.startsWith('sk_')
+  },
+  { 
+    name: 'JWT Token', 
+    regex: /eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*/g,
+    validate: (match) => {
+      const parts = match.split('.');
+      return parts.length === 3 && parts[0].startsWith('eyJ') && parts[1].startsWith('eyJ');
+    }
+  }
 ];
 
 function normalizeHost(value) {
@@ -31,17 +64,20 @@ function normalizeHost(value) {
 
 function buildAllowedHosts(engagement, extraDomains = []) {
   const domains = new Set();
+  if (Array.isArray(engagement.targets)) {
+    for (const target of engagement.targets) {
+      if (Array.isArray(target.domains)) {
+        target.domains.forEach((d) => d && domains.add(normalizeHost(d)));
+      }
+    }
+  }
   if (Array.isArray(engagement.domains)) {
-    engagement.domains.forEach((d) => {
-      if (d) domains.add(normalizeHost(d));
-    });
+    engagement.domains.forEach((d) => d && domains.add(normalizeHost(d)));
   }
   if (engagement.targetDomain) {
     domains.add(normalizeHost(engagement.targetDomain));
   }
-  extraDomains.forEach((d) => {
-    if (d) domains.add(normalizeHost(d));
-  });
+  extraDomains.forEach((d) => d && domains.add(normalizeHost(d)));
   return [...domains].filter(Boolean);
 }
 
@@ -57,7 +93,7 @@ async function loadCache(cachePath) {
     const raw = await fs.readFile(cachePath, 'utf-8');
     return JSON.parse(raw);
   } catch {
-    return { knownJsUrls: {} };
+    return { knownJsUrls: {}, knownSecrets: {} };
   }
 }
 
@@ -90,10 +126,8 @@ function extractJsUrls(html, baseUrl) {
   while ((match = scriptRegex.exec(html))) {
     try {
       const absUrl = new URL(match[1], baseUrl).href;
-      urls.add(absUrl);
-    } catch {
-      // ignore invalid URLs
-    }
+      if (absUrl.endsWith('.js')) urls.add(absUrl);
+    } catch {}
   }
   return [...urls];
 }
@@ -107,15 +141,31 @@ function isAllowedHost(url, allowedHosts) {
   }
 }
 
-function findSecrets(text) {
-  const findings = [];
+function findSecrets(text, url) {
+  const allFindings = [];
   for (const pattern of SECRET_PATTERNS) {
-    const matches = [...new Set(text.match(pattern.regex) || [])];
-    if (matches.length > 0) {
-      findings.push({ name: pattern.name, matches: matches.slice(0, 5) });
+    const rawMatches = [...new Set(text.match(pattern.regex) || [])];
+    const validMatches = rawMatches
+      .map(m => m.trim())
+      .filter(m => m.length > 10)
+      .filter(m => pattern.validate ? pattern.validate(m) : true)
+      .filter(m => {
+        const lower = m.toLowerCase();
+        if (lower.includes('example') || lower.includes('placeholder') || lower.includes('test')) return false;
+        if (lower.includes('undefined') || lower.includes('null') || lower.includes('function')) return false;
+        if (lower.includes('jquery') || lower.includes('bootstrap') || lower.includes('lodash')) return false;
+        return true;
+      });
+    
+    if (validMatches.length > 0) {
+      allFindings.push({ 
+        name: pattern.name, 
+        matches: validMatches.slice(0, 3),
+        url 
+      });
     }
   }
-  return findings;
+  return allFindings;
 }
 
 async function getDbConnection() {
@@ -161,28 +211,22 @@ async function listKnownSubdomains(engagement) {
   }
 }
 
-function buildMessageForFindings(engagement, newJsUrls, secretResults, scanTargets) {
-  let message = `<b>🧠 JS Recon results for ${engagement.name}</b>\n\n`;
-  message += `• <i>Targets scanned:</i> ${scanTargets.join(', ')}\n`;
-  if (newJsUrls.length > 0) {
-    message += `• <b>New JS files:</b> ${newJsUrls.length}\n`;
-    newJsUrls.slice(0, 10).forEach((url) => {
-      message += `  • <a href="${url}">${url}</a>\n`;
-    });
-    if (newJsUrls.length > 10) {
-      message += `  • +${newJsUrls.length - 10} more\n`;
+async function sendSecretNotification(engagement, finding) {
+  for (const match of finding.matches) {
+    const truncated = match.length > 60 ? match.slice(0, 60) + '...' : match;
+    const message = `<b>🔑 NEW SECRET FOUND in ${engagement.name}</b>\n\n` +
+      `• <b>Type:</b> ${finding.name}\n` +
+      `• <b>URL:</b> <code>${finding.url}</code>\n` +
+      `• <b>Value:</b> <code>${truncated}</code>\n` +
+      `• <i>${new Date().toISOString()}</i>`;
+    
+    try {
+      await sendTelegramMessage(message);
+      console.log(pc.green(`[+] Secret notification sent: ${finding.name}`));
+    } catch (e) {
+      console.log(pc.red(`[!] Failed to send secret notification: ${e.message}`));
     }
   }
-  if (secretResults.length > 0) {
-    message += `• <b>Secrets found:</b> ${secretResults.length}\n`;
-    secretResults.slice(0, 5).forEach((result) => {
-      message += `  • <b>${result.url}</b> - ${result.findings.map((f) => f.name).join(', ')}\n`;
-    });
-  }
-  if (newJsUrls.length === 0 && secretResults.length === 0) {
-    message += `<i>No new JS files or secrets detected on this scan.</i>\n`;
-  }
-  return message;
 }
 
 async function scanJsFile(url, cache, allowedHosts, timeoutSeconds) {
@@ -193,9 +237,25 @@ async function scanJsFile(url, cache, allowedHosts, timeoutSeconds) {
     return null;
   }
 
-  const findings = findSecrets(content);
+  const findings = findSecrets(content, normalizedUrl);
+  
+  const newFindings = [];
+  for (const finding of findings) {
+    for (const match of finding.matches) {
+      const secretKey = `${finding.name}:${match}`;
+      if (!cache.knownSecrets || !cache.knownSecrets[secretKey]) {
+        if (!cache.knownSecrets) cache.knownSecrets = {};
+        cache.knownSecrets[secretKey] = {
+          url: normalizedUrl,
+          foundAt: new Date().toISOString()
+        };
+        newFindings.push({ ...finding, matches: [match] });
+      }
+    }
+  }
+
   cache.knownJsUrls[normalizedUrl] = new Date().toISOString();
-  return { url: normalizedUrl, newJs: !isKnown, findings };
+  return { url: normalizedUrl, newJs: !isKnown, findings: newFindings, allFindings: findings };
 }
 
 async function scanDomainScripts(domain, allowedHosts, cache, timeoutSeconds) {
@@ -223,7 +283,7 @@ async function scanDomainScripts(domain, allowedHosts, cache, timeoutSeconds) {
     if (!scan) continue;
     result.scanned.push(scan);
     if (scan.findings.length > 0) {
-      result.secrets.push(scan);
+      result.secrets.push(...scan.findings);
     }
   }
 
@@ -252,7 +312,7 @@ function aggregateScanResults(domainResults) {
         newJsUrls.push(scan.url);
       }
       if (scan.findings.length > 0) {
-        secretResults.push({ url: scan.url, findings: scan.findings });
+        secretResults.push(...scan.findings);
       }
     }
   }
@@ -273,20 +333,14 @@ export async function scanNewSubdomain(engagement, subdomain) {
 
   const scanDomains = [normalizedSubdomain];
   const domainResults = await scanTargets(engagement, scanDomains, cache);
-  await saveCache(cachePath, cache);
-
-  const { newJsUrls, secretResults } = aggregateScanResults(domainResults);
-  if (secretResults.length === 0) {
-    return;
+  
+  for (const entry of domainResults) {
+    for (const finding of entry.secrets) {
+      await sendSecretNotification(engagement, finding);
+    }
   }
-
-  const message = buildMessageForFindings(
-    engagement,
-    newJsUrls,
-    secretResults,
-    scanDomains
-  );
-  await sendTelegramMessage(message);
+  
+  await saveCache(cachePath, cache);
 }
 
 export async function runFullJsRecon(engagement) {
@@ -304,6 +358,13 @@ export async function runFullJsRecon(engagement) {
   }
 
   const domainResults = await scanTargets(engagement, scanDomains, cache);
+  
+  for (const entry of domainResults) {
+    for (const finding of entry.secrets) {
+      await sendSecretNotification(engagement, finding);
+    }
+  }
+  
   await saveCache(cachePath, cache);
 
   const { newJsUrls, secretResults } = aggregateScanResults(domainResults);
@@ -311,11 +372,18 @@ export async function runFullJsRecon(engagement) {
     return;
   }
 
-  const message = buildMessageForFindings(
-    engagement,
-    newJsUrls,
-    secretResults,
-    scanDomains
-  );
-  await sendTelegramMessage(message);
+  let message = `<b>🧠 JS Recon summary for ${engagement.name}</b>\n\n`;
+  message += `• <i>Targets scanned:</i> ${scanDomains.length}\n`;
+  if (newJsUrls.length > 0) {
+    message += `• <b>New JS files:</b> ${newJsUrls.length}\n`;
+  }
+  if (secretResults.length > 0) {
+    message += `• <b>New secrets found:</b> ${secretResults.length} (see individual alerts above)\n`;
+  }
+  
+  try {
+    await sendTelegramMessage(message);
+  } catch (e) {
+    console.log(pc.red(`[!] Failed to send summary: ${e.message}`));
+  }
 }
