@@ -37,6 +37,7 @@ services:
       - ./utils.js:/app/utils.js:ro
       - ./index.js:/app/index.js:ro
       - ./screenshots:/app/screenshots
+      - ./js-recon.js:/app/js-recon.js:ro
     command: node index.js
 
   scanner:
@@ -56,6 +57,7 @@ services:
       - .env
     volumes:
       - ./config.json:/app/config.json:ro
+      - ./js-recon.js:/app/js-recon.js:ro
       - subdomains:/app/subdomains
     command: node subdomain-scanner.js
 

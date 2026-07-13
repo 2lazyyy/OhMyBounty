@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import 'dotenv/config';
 import pc from 'picocolors';
 import { fileURLToPath } from 'node:url';
+import { scanNewSubdomain, runFullJsRecon } from './js-recon.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -80,40 +81,67 @@ async function ensureDatabase() {
   await conn.end();
 }
 
+function getEngagementDomains(engagement) {
+  const domains = new Set();
+  if (Array.isArray(engagement.targets)) {
+    for (const target of engagement.targets) {
+      if (Array.isArray(target.domains)) {
+        target.domains.forEach((domain) => domain && domains.add(domain));
+      }
+      if (target.domain) {
+        domains.add(target.domain);
+      }
+    }
+  }
+  if (Array.isArray(engagement.domains)) {
+    engagement.domains.forEach((domain) => domain && domains.add(domain));
+  }
+  if (engagement.targetDomain) {
+    domains.add(engagement.targetDomain);
+  }
+  return [...domains];
+}
+
 async function runToolsForEngagement(engagement) {
   if (!engagement.subdomainMonitor?.runTools) return;
 
   const tools = engagement.subdomainMonitor.tools || [];
   const outputDir = engagement.subdomainMonitor.subdomainsDirectory;
-  const targetDomain = engagement.targetDomain || engagement.name.toLowerCase().replace(/\s+/g, '');
+  const targetDomains = getEngagementDomains(engagement);
+
+  if (targetDomains.length === 0) {
+    targetDomains.push(engagement.name.toLowerCase().replace(/\s+/g, ''));
+  }
 
   await fs.mkdir(outputDir, { recursive: true });
 
-  for (const template of tools) {
-    const cmd = template
-      .replaceAll('{domain}', targetDomain)
-      .replaceAll('{output}', outputDir);
-    console.log(pc.yellow(`[+] Tool: ${cmd}`));
-    try {
-      await execPromise(cmd, { timeout: 600000, cwd: __dirname });
-    } catch (e) {
-      console.log(pc.red(`[!] Failed: ${e.message}`));
+  for (const targetDomain of targetDomains) {
+    for (const template of tools) {
+      const cmd = template
+        .replaceAll('{domain}', targetDomain)
+        .replaceAll('{output}', outputDir);
+      console.log(pc.yellow(`[+] Tool: ${cmd}`));
+      try {
+        await execPromise(cmd, { timeout: 600000, cwd: __dirname });
+      } catch (e) {
+        console.log(pc.red(`[!] Failed: ${e.message}`));
+      }
     }
-  }
 
-  const shellScript = path.join(__dirname, 'tools', 'run-subdomain-tools.sh');
-  try {
-    await fs.access(shellScript);
-    const env = {
-      ...process.env,
-      ENGAGEMENT_CODE: engagement.engagementCode,
-      TARGET_DOMAIN: targetDomain,
-      OUTPUT_DIR: outputDir
-    };
-    await execPromise(`bash "${shellScript}"`, { timeout: 900000, env });
-    console.log(pc.green(`[+] Shell script done for ${engagement.name}`));
-  } catch (e) {
-    // Optional
+    const shellScript = path.join(__dirname, 'tools', 'run-subdomain-tools.sh');
+    try {
+      await fs.access(shellScript);
+      const env = {
+        ...process.env,
+        ENGAGEMENT_CODE: engagement.engagementCode,
+        TARGET_DOMAIN: targetDomain,
+        OUTPUT_DIR: outputDir
+      };
+      await execPromise(`bash "${shellScript}"`, { timeout: 900000, env });
+      console.log(pc.green(`[+] Shell script done for ${engagement.name} (${targetDomain})`));
+    } catch (e) {
+      // Optional
+    }
   }
 }
 
@@ -180,6 +208,12 @@ async function processSubdomainFiles() {
             `INSERT INTO \`${engagement.engagementCode}\` (subdomain) VALUES (?)`,
             [subdomain]
           );
+
+          try {
+            await scanNewSubdomain(engagement, subdomain);
+          } catch (e) {
+            console.log(pc.red(`[!] JS recon failed for ${subdomain}: ${e.message}`));
+          }
         }
       }
 
@@ -212,5 +246,16 @@ cron.schedule('*/10 * * * *', async () => {
   console.log(pc.blue('[i] Next check in 10 minutes'));
 });
 
+cron.schedule('0 */4 * * *', async () => {
+  console.log(pc.yellow(`[+] ${new Date().toISOString()} Running full JS recon for all engagements...`));
+  const config = await loadConfig();
+  for (const e of config.engagements) {
+    if (e.enabled && e.jsRecon?.enabled) {
+      await runFullJsRecon(e);
+    }
+  }
+  console.log(pc.green('[+] Full JS recon run complete'));
+});
+
 await processSubdomainFiles();
-console.log(pc.green('[+] Scanner ready. Tools: every 3h. File check: every 10m.'));
+console.log(pc.green('[+] Scanner ready. Tools: every 3h. File check: every 10m. Full JS recon: every 4h.'));

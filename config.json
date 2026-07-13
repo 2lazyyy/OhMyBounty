@@ -5,6 +5,12 @@
       "engagementCode": "nasa-vdp",
       "enabled": true,
       "platform": "bugcrowd",
+      "targets": [
+        {
+          "name": "NASA main domain",
+          "domains": ["nasa.gov", "usgeo.gov", "globe.gov"]
+        }
+      ],
       "announcements": {
         "enabled": true,
         "lastAnnouncementId": null
@@ -15,12 +21,24 @@
         "filterBy": ["disclosures", "accepted"],
         "lastReportId": null
       },
-        "subdomainMonitor": {
+      "subdomainMonitor": {
         "enabled": true,
         "storeMode": true,
+        "runTools": true,
+        "tools": [
+          "subfinder -d {domain} -all -silent -o {output}/{domain}-subfinder.txt",
+          "amass enum -passive -d {domain} -o {output}/{domain}-amass.txt",
+          "sublist3r -d {domain} -o {output}/{domain}-sublist3r_raw.txt",
+          "curl -s \"https://crt.sh/?q=%25.{domain}&output=json\" | jq -r '.[].name_value' | sed 's/^\\*\\.//g' | sort -u > {output}/{domain}-crtsh.txt"
+        ],
         "subdomainsDirectory": "/app/subdomains/nasa-vdp",
         "screenshotEnabled": true,
         "hideCodes": [404, 403, 500, 401, 503]
+      },
+      "jsRecon": {
+        "enabled": true,
+        "scanOnNewSubdomain": true,
+        "scanTimeoutSeconds": 15
       }
     }
   ],
