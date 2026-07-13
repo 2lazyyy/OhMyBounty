@@ -43,7 +43,7 @@
     }
   ],
 
-  "cronInterval": "* * * * *",
+  "cronInterval": "*/15 * * * *",
   "notifications": {
     "telegram": true,
     "discord": false

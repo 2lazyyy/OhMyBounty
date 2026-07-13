@@ -33,7 +33,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./config.json:/app/config.json:ro
+      - ./config.json:/app/config.json
       - ./utils.js:/app/utils.js:ro
       - ./index.js:/app/index.js:ro
       - ./screenshots:/app/screenshots

@@ -24,11 +24,11 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const BANNER = `  ____  __   __  ___     ___                 __      
- / __ \/ /  /  |/  /_ __/ _ )___  __ _____  / /___ __
-/ /_/ / _ \/ /|_/ / // / _  / _ \/ // / _ \/ __/ // /
-\____/_//_/_/  /_/\_, /____/\___/\_,_/_//_/\__/\_, / 
-                 /___/                        /___/  `;
+const BANNER = `  ____  __   __  ___     ___                 __
+  / __ \/ /  /  |/  /_ __/ _ )___  __ _____  / /___ __
+ / /_/ / _ \/ /|_/ / // / _  / _ \/ // / _ \/ __/ // /
+ \____/_//_/_/  /_/\_, /____/\___/\_,_/_//_/\__/\_, /
+                  /___/                        /___/  `;
 
 const data = await fs.readFile(path.join(__dirname, "config.json"), "utf-8");
 let config = JSON.parse(data);
@@ -36,7 +36,7 @@ let config = JSON.parse(data);
 async function checkAnnouncements(engagement) {
   try {
     const url = `https://bugcrowd.com/engagements/${engagement.engagementCode}/announcements.json`;
-    const res = await axios.get(url);
+    const res = await axios.get(url, { timeout: 15000 });
     const announcements = res.data.announcements;
     const lastAnnouncementId = engagement.announcements.lastAnnouncementId;
     if (lastAnnouncementId === null) {
@@ -65,9 +65,7 @@ async function checkAnnouncements(engagement) {
             )
           );
           logUpdate.done();
-          //Send notification
           if (config.notifications.telegram) {
-            //Send telegram notification
             logUpdate(pc.yellow(`[+] Sending notification to Telegram`));
             let message = `<b>📢 New announcement in <u>${engagement.name}</u> 📢</b>\n\n`;
             const parsedBody = cheerio.load(announcement.body);
@@ -75,7 +73,6 @@ async function checkAnnouncements(engagement) {
             await sendTelegramMessage(message);
           }
           if (config.notifications.discord) {
-            //Send discord notification
             logUpdate(pc.yellow(`[+] Sending notification to Discord`));
             const parsedBody = cheerio.load(announcement.body);
             const message = parsedBody.text();
@@ -85,7 +82,6 @@ async function checkAnnouncements(engagement) {
             );
           }
         } else {
-          //Announcements come sorted by date, so we can break the loop
           break;
         }
       }
@@ -98,8 +94,8 @@ async function checkAnnouncements(engagement) {
       }
     }
   } catch (err) {
-    console.log(err);
-    exit(1);
+    console.log(pc.red(`[!] Announcement error in ${engagement.name}: ${err.message}`));
+    return;
   }
 }
 
@@ -110,7 +106,7 @@ async function checkCrowdStream(engagement) {
     }/crowdstream.json?page=1&filter_by=${engagement.crowdStream.filterBy.join(
       ","
     )}`;
-    const res = await axios.get(url);
+    const res = await axios.get(url, { timeout: 15000 });
     const crowdStream = res.data.results;
     const lastReportId = engagement.crowdStream.lastReportId;
     if (lastReportId === null) {
@@ -139,9 +135,7 @@ async function checkCrowdStream(engagement) {
             )
           );
           logUpdate.done();
-          //Send notification
           if (config.notifications.telegram) {
-            //Send telegram notification
             logUpdate(pc.yellow(`[+] Sending notification to Telegram`));
             let message = `<b>🚨 New report in <a href="https://bugcrowd.com${report.engagement_path}">${engagement.name}</a> 🚨 </b>\n\n`;
             message += `<b>${report.title || "<s>Redacted</s>"}</b>\n\n`;
@@ -177,21 +171,20 @@ async function checkCrowdStream(engagement) {
       }
     }
   } catch (err) {
-    console.log(err);
-    exit(1);
+    console.log(pc.red(`[!] CrowdStream error in ${engagement.name}: ${err.message}`));
+    return;
   }
 }
 
 async function notifySubdomain(subdomain, engagement) {
   const imgPath = path.resolve("screenshots", "screenshot.png");
-  // Launch the browser and open a new blank page
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--start-maximized", "--no-sandbox", "--disable-setuid-sandbox"],
   });
   logUpdate(pc.yellow(`[+] Checking `) + pc.cyan(subdomain));
   const page = await browser.newPage();
-  page.setDefaultTimeout(10 * 60 * 1000); // 10 mins
+  page.setDefaultTimeout(10 * 60 * 1000);
   const URL = subdomain.includes("https://")
     ? subdomain
     : `https://${subdomain}`;
@@ -226,7 +219,6 @@ async function notifySubdomain(subdomain, engagement) {
     }
     if (config.notifications.telegram) {
       logUpdate(pc.yellow(`[+] Sending notification to Telegram`));
-      //Send telegram notification
       let message = `<b>🌐 New active subdomain found in <a href="https://bugcrowd.com/engagements/${engagement.engagementCode}">${engagement.name}</a> </b>\n\n`;
       message += `•<i> <a href="${URL}">${subdomain}</a> </i>\n`;
       message += `•<i> Status:</i> ${
@@ -248,7 +240,6 @@ async function notifySubdomain(subdomain, engagement) {
     }
     if (config.notifications.discord) {
       logUpdate(pc.yellow(`[+] Sending notification to Discord`));
-      //Send discord notification
       let messageMd;
       let title = `**🌐 New active subdomain found in [${engagement.name}](https://bugcrowd.com/engagements/${engagement.engagementCode})**\n`;
       if (engagement.subdomainMonitor.screenshotEnabled) {
@@ -273,15 +264,15 @@ async function notifySubdomain(subdomain, engagement) {
   } catch (err) {
     console.log(err);
   } finally {
-    //Remove the screenshot
-    await browser.close();
+    try {
+      await browser.close();
+    } catch (e) {}
     try {
       await fs.unlink(imgPath);
-    } catch (err) {
-      //Passssss
-    }
+    } catch (err) {}
   }
 }
+
 async function processFile(filePath, engagement, connection) {
   try {
     const data = await fs.readFile(filePath, "utf-8");
@@ -316,69 +307,83 @@ async function processFile(filePath, engagement, connection) {
         }
       }
     }
-    //Remove the file
     await fs.unlink(filePath);
   } catch (err) {
     throw new Error(`[!] Error reading file: ${err}`);
   }
 }
-async function checkSubdomains(engagement) {
+
+async function getAllTxtFiles(dir) {
+  const files = [];
   try {
-    const connection = await mysql.createConnection({
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...await getAllTxtFiles(fullPath));
+      } else if (entry.isFile() && path.extname(entry.name) === ".txt") {
+        files.push(fullPath);
+      }
+    }
+  } catch (e) {}
+  return files;
+}
+
+async function checkSubdomains(engagement) {
+  let connection;
+  try {
+    connection = await mysql.createConnection({
       host: process.env.MYSQL_HOST || "localhost",
       port: process.env.MYSQL_PORT || 3306,
       user: process.env.MYSQL_USER || "root",
       password: process.env.MYSQL_PASSWORD || "",
       database: process.env.MYSQL_DATABASE || "omb",
     });
-    //Create table if not exists
     const table = `
     CREATE TABLE IF NOT EXISTS \`${engagement.engagementCode}\` (
     id INT AUTO_INCREMENT PRIMARY KEY,
     subdomain VARCHAR(255) UNIQUE NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`;
-    connection.query(table);
+    await connection.query(table);
 
-    // Read files from the program directory
-    const files = await fs.readdir(
-      engagement.subdomainMonitor.subdomainsDirectory
-    );
-    const txtFiles = files.filter((file) => path.extname(file) == ".txt");
+    const txtFiles = await getAllTxtFiles(engagement.subdomainMonitor.subdomainsDirectory);
     logUpdate(
       pc.yellow(
         `[i] Reading ${txtFiles.length} subdomains files for ${engagement.name}`
       )
     );
     logUpdate.done();
-    // Process each .txt file
-    for (const file of txtFiles) {
-      await processFile(
-        path.resolve(engagement.subdomainMonitor.subdomainsDirectory, file),
-        engagement,
-        connection
-      );
+    for (const filePath of txtFiles) {
+      await processFile(filePath, engagement, connection);
     }
   } catch (err) {
-    throw new Error(`[!] Error checking subdomains: ${err}`);
+    console.log(pc.red(`[!] Subdomain check error in ${engagement.name}: ${err.message}`));
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 }
+
 async function readConfig() {
   try {
     for (const engagement of config.engagements) {
-      if (engagement.enabled) {
+      if (!engagement.enabled) continue;
+      try {
         logUpdate(pc.yellow(`[+] Monitoring ${pc.cyan(engagement.name)}`));
         if (engagement.announcements.enabled) {
-          //monitor changelog
           await checkAnnouncements(engagement);
         }
         if (engagement.crowdStream.enabled) {
-          //monitor crowdstream
           await checkCrowdStream(engagement);
         }
-	if (engagement.subdomainMonitor.enabled && !process.env.SKIP_SUBDOMAINS) {
+        if (engagement.subdomainMonitor.enabled && !process.env.SKIP_SUBDOMAINS) {
           await checkSubdomains(engagement);
         }
+      } catch (err) {
+        console.log(pc.red(`[!] Skipping ${engagement.name} due to error: ${err.message}`));
+        continue;
       }
     }
   } catch (err) {
@@ -386,6 +391,7 @@ async function readConfig() {
     exit(1);
   }
 }
+
 async function writeConfigToFile() {
   try {
     const updatedConfig = JSON.stringify(config, null, 2);
@@ -406,9 +412,9 @@ async function showNeon() {
   }
   logUpdate.done();
 }
+
 async function main() {
   try {
-    // Read file again to get the latest changes
     const data = await fs.readFile(
       path.join(__dirname, "config.json"),
       "utf-8"
@@ -423,6 +429,7 @@ async function main() {
     exit(1);
   }
 }
+
 await showNeon();
 
 const isConfigCronValid = cron.validate(config.cronInterval);

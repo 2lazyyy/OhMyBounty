@@ -12,7 +12,11 @@ RUN apt-get update && apt-get install -y \
     libasound2t64 libatk-bridge2.0-0 libgtk-3-0 libnspr4 libnss3 \
     xdg-utils libxss1 \
     mysql-client \
-    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20.x (replaces the old apt-get nodejs npm)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
