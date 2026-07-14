@@ -26,7 +26,7 @@
           "disclosures",
           "accepted"
         ],
-        "lastReportId": "73b8d47e-1e1c-444c-9281-b064377e967f"
+        "lastReportId": "41d2d9d1-056d-453b-b8cb-89b1f53c72f4"
       },
       "subdomainMonitor": {
         "enabled": true,
@@ -40,7 +40,13 @@
         ],
         "subdomainsDirectory": "/app/subdomains/nasa-vdp",
         "screenshotEnabled": true,
-        "hideCodes": [404,403,500,401,503]
+        "hideCodes": [
+          404,
+          403,
+          500,
+          401,
+          503
+        ]
       },
       "jsRecon": {
         "enabled": true,

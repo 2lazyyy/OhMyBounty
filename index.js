@@ -8,7 +8,7 @@ import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "path";
 import pc from "picocolors";
-import { exit } from "process";
+
 import puppeteer from "puppeteer";
 import {
   sendDiscordMessage,
@@ -388,7 +388,7 @@ async function readConfig() {
     }
   } catch (err) {
     console.log(err);
-    exit(1);
+    return;
   }
 }
 
@@ -426,7 +426,7 @@ async function main() {
     logUpdate(pc.blue("[i] Waiting for next scheduled iteration"));
   } catch (err) {
     console.log(pc.red(err));
-    exit(1);
+    return;
   }
 }
 

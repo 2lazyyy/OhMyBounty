@@ -20,19 +20,20 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install subfinder (pre-built binary)
-RUN curl -sL https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder-linux-arm64.zip -o /tmp/subfinder.zip \
-    && unzip /tmp/subfinder.zip -d /tmp \
-    && mv /tmp/subfinder /usr/local/bin/ \
+# install pre-built subfinder binary
+RUN curl -fsSL https://github.com/projectdiscovery/subfinder/releases/download/v2.14.0/subfinder_2.14.0_linux_amd64.zip -o /tmp/subfinder.zip \
+    && unzip /tmp/subfinder.zip -d /tmp/subfinder-extract \
+    && find /tmp/subfinder-extract -type f -name "subfinder" -exec mv {} /usr/local/bin/subfinder \; \
     && chmod +x /usr/local/bin/subfinder \
-    && rm /tmp/subfinder.zip
+    && rm -rf /tmp/subfinder.zip /tmp/subfinder-extract
 
-# Install amass (pre-built binary)
-RUN curl -sL https://github.com/owasp-amass/amass/releases/latest/download/amass_linux_arm64.zip -o /tmp/amass.zip \
-    && unzip /tmp/amass.zip -d /tmp \
-    && mv /tmp/amass /usr/local/bin/ \
+# install pre-built amass binary
+RUN curl -fsSL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass_linux_amd64.tar.gz -o /tmp/amass.tar.gz \
+    && mkdir -p /tmp/amass-extract \
+    && tar -xzf /tmp/amass.tar.gz -C /tmp/amass-extract \
+    && find /tmp/amass-extract -type f -name "amass" -exec mv {} /usr/local/bin/amass \; \
     && chmod +x /usr/local/bin/amass \
-    && rm /tmp/amass.zip
+    && rm -rf /tmp/amass.tar.gz /tmp/amass-extract
 
 RUN pip3 install sublist3r --break-system-packages
 
