@@ -21,14 +21,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Install subfinder (pre-built binary)
-RUN curl -sL https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder-linux-arm64.zip -o /tmp/subfinder.zip \
+RUN curl -sL https://github.com/projectdiscovery/subfinder/releases/download/v2.14.0/subfinder_2.14.0_linux_amd64.zip -o /tmp/subfinder.zip \
     && unzip /tmp/subfinder.zip -d /tmp \
     && mv /tmp/subfinder /usr/local/bin/ \
     && chmod +x /usr/local/bin/subfinder \
     && rm /tmp/subfinder.zip
 
 # Install amass (pre-built binary)
-RUN curl -sL https://github.com/owasp-amass/amass/releases/latest/download/amass_linux_arm64.zip -o /tmp/amass.zip \
+RUN curl -sL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass_linux_amd64.tar.gz -o /tmp/amass.zip \
     && unzip /tmp/amass.zip -d /tmp \
     && mv /tmp/amass /usr/local/bin/ \
     && chmod +x /usr/local/bin/amass \
