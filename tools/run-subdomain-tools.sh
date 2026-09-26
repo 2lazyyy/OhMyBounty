@@ -21,12 +21,14 @@ for TARGET_DOMAIN in $TARGET_DOMAINS; do
     amass enum -passive -d "$TARGET_DOMAIN" -o "$TMP_DIR/${SAFE_DOMAIN}-amass.txt" 2>/dev/null || true
     sublist3r -d "$TARGET_DOMAIN" -o "$TMP_DIR/${SAFE_DOMAIN}-sublist3r.txt" 2>/dev/null || true
 
-    curl -fsS "https://crt.sh/?q=%25.${TARGET_DOMAIN}&output=json" 2>/dev/null |
+    echo "[i] Querying crt.sh for $TARGET_DOMAIN"
+    curl --connect-timeout 10 --max-time 30 -fsS "https://crt.sh/?q=%25.${TARGET_DOMAIN}&output=json" 2>/dev/null |
         jq -r '.[].name_value' 2>/dev/null |
         sed 's/^\*\.//g' > "$TMP_DIR/${SAFE_DOMAIN}-crtsh.txt" || true
 
     if [ -n "${C99_API_KEY:-}" ]; then
-        curl -fsS "https://api.c99.nl/subdomainfinder?key=$C99_API_KEY&domain=$TARGET_DOMAIN&json" 2>/dev/null |
+        echo "[i] Querying C99 for $TARGET_DOMAIN"
+        curl --connect-timeout 10 --max-time 30 -fsS "https://api.c99.nl/subdomainfinder?key=$C99_API_KEY&domain=$TARGET_DOMAIN&json" 2>/dev/null |
             jq -r '.subdomains[]?' 2>/dev/null > "$TMP_DIR/${SAFE_DOMAIN}-c99.txt" || true
     fi
 done
@@ -44,8 +46,11 @@ done
 
 sort -u "$TMP_DIR/all-subdomains.txt" > "$TMP_DIR/candidates.txt"
 if [ -s "$TMP_DIR/candidates.txt" ]; then
-    httpx -l "$TMP_DIR/candidates.txt" -silent -no-color > "$TMP_DIR/live-urls.txt"
+    CANDIDATE_COUNT=$(wc -l < "$TMP_DIR/candidates.txt" | tr -d ' ')
+    echo "[i] Probing $CANDIDATE_COUNT discovered candidates with httpx"
+    httpx -l "$TMP_DIR/candidates.txt" -silent -no-color -timeout 10 -retries 1 > "$TMP_DIR/live-urls.txt"
 else
+    echo "[i] No in-scope candidates to probe with httpx"
     : > "$TMP_DIR/live-urls.txt"
 fi
 
