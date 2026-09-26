@@ -12,7 +12,7 @@ LATEST_DIR="$OUTPUT_DIR/latest"
 mkdir -p "$OUTPUT_DIR" "$TMP_DIR" "$LATEST_DIR"
 
 for TARGET_DOMAIN in $TARGET_DOMAINS; do
-    SAFE_DOMAIN=$(printf '%s' "$TARGET_DOMAIN" | tr -c '[:alnum:]._- ' '_')
+    SAFE_DOMAIN=$(printf '%s' "$TARGET_DOMAIN" | sed 's/[^[:alnum:]._-]/_/g')
     echo "[+] Scanning $TARGET_DOMAIN at $(date)"
 
     subfinder -d "$TARGET_DOMAIN" -all -silent -o "$TMP_DIR/${SAFE_DOMAIN}-subfinder.txt" 2>/dev/null || true
