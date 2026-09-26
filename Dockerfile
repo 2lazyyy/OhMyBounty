@@ -27,11 +27,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Install subfinder (pre-built binary)
-RUN curl -sL https://github.com/projectdiscovery/subfinder/releases/download/v2.14.0/subfinder_2.14.0_linux_amd64.zip -o /tmp/subfinder.zip \
-    && unzip /tmp/subfinder.zip -d /tmp \
-    && mv /tmp/subfinder /usr/local/bin/ \
-    && chmod +x /usr/local/bin/subfinder \
-    && rm /tmp/subfinder.zip
+RUN curl -fsSL https://github.com/projectdiscovery/subfinder/releases/download/v2.14.0/subfinder_2.14.0_linux_amd64.zip -o /tmp/subfinder.zip \
+    && mkdir -p /tmp/subfinder \
+    && unzip -q /tmp/subfinder.zip -d /tmp/subfinder \
+    && SUBFINDER_BINARY="$(find /tmp/subfinder -type f -name subfinder -print -quit)" \
+    && test -n "$SUBFINDER_BINARY" \
+    && install -m 0755 "$SUBFINDER_BINARY" /usr/local/bin/subfinder \
+    && rm -rf /tmp/subfinder /tmp/subfinder.zip
 
 # Install amass (pre-built gzip tarball)
 RUN curl -fsSL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass_linux_amd64.tar.gz -o /tmp/amass.tar.gz \
@@ -44,8 +46,13 @@ RUN curl -fsSL https://github.com/owasp-amass/amass/releases/download/v5.1.1/ama
 COPY --from=recon-tools /go/bin/katana /usr/local/bin/katana
 COPY --from=recon-tools /go/bin/assetfinder /usr/local/bin/assetfinder
 
-RUN curl -fsSL https://github.com/findomain/findomain/releases/latest/download/findomain-linux -o /usr/local/bin/findomain \
-    && chmod +x /usr/local/bin/findomain
+RUN curl -fsSL https://github.com/Findomain/Findomain/releases/download/10.0.1/findomain-linux.zip -o /tmp/findomain.zip \
+    && mkdir -p /tmp/findomain \
+    && unzip -q /tmp/findomain.zip -d /tmp/findomain \
+    && FINDOMAIN_BINARY="$(find /tmp/findomain -type f -name findomain -print -quit)" \
+    && test -n "$FINDOMAIN_BINARY" \
+    && install -m 0755 "$FINDOMAIN_BINARY" /usr/local/bin/findomain \
+    && rm -rf /tmp/findomain /tmp/findomain.zip
 
 RUN pip3 install sublist3r --break-system-packages
 
