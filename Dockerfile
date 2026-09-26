@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS recon-tools
+FROM golang:1.25.14-alpine AS recon-tools
 
 RUN go install github.com/projectdiscovery/katana/cmd/katana@latest \
     && go install github.com/tomnomnom/assetfinder@latest
