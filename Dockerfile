@@ -1,4 +1,4 @@
-FROM golang:1.25.14-alpine AS recon-tools
+FROM golang:1.26-alpine AS recon-tools
 
 RUN go install github.com/projectdiscovery/katana/cmd/katana@latest \
     && go install github.com/tomnomnom/assetfinder@latest
@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     libasound2t64 libatk-bridge2.0-0 libgtk-3-0 libnspr4 libnss3 \
     xdg-utils libxss1 \
     mysql-client \
+    tar \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,12 +33,13 @@ RUN curl -sL https://github.com/projectdiscovery/subfinder/releases/download/v2.
     && chmod +x /usr/local/bin/subfinder \
     && rm /tmp/subfinder.zip
 
-# Install amass (pre-built binary)
-RUN curl -sL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass_linux_amd64.tar.gz -o /tmp/amass.zip \
-    && unzip /tmp/amass.zip -d /tmp \
-    && mv /tmp/amass /usr/local/bin/ \
-    && chmod +x /usr/local/bin/amass \
-    && rm /tmp/amass.zip
+# Install amass (pre-built gzip tarball)
+RUN curl -fsSL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass_linux_amd64.tar.gz -o /tmp/amass.tar.gz \
+    && tar -xzf /tmp/amass.tar.gz -C /tmp \
+    && AMASS_BINARY="$(find /tmp -type f -name amass -print -quit)" \
+    && test -n "$AMASS_BINARY" \
+    && install -m 0755 "$AMASS_BINARY" /usr/local/bin/amass \
+    && rm -f /tmp/amass.tar.gz
 
 COPY --from=recon-tools /go/bin/katana /usr/local/bin/katana
 COPY --from=recon-tools /go/bin/assetfinder /usr/local/bin/assetfinder
