@@ -131,9 +131,9 @@ export const sendDiscordSubdomain = async (message, localImage) => {
 
     const attachment = new AttachmentBuilder(
       fs.readFileSync(localImage),
-      "subdomains.png"
+      { name: "live-target.png" }
     );
-    webhookClient.send({
+    await webhookClient.send({
       username: "OhMyBounty",
       avatarURL: "https://i.imgur.com/8uE8voU.jpeg",
       content: message,

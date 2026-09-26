@@ -6,33 +6,15 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import 'dotenv/config';
 import pc from 'picocolors';
+import puppeteer from 'puppeteer';
 import { fileURLToPath } from 'node:url';
-import { scanNewSubdomain, runFullJsRecon } from './js-recon.js';
+import { runFullJsRecon } from './js-recon.js';
+import { probeLiveTargets } from './live-targets.js';
+import { sendDiscordSubdomain, sendTelegramLocalImage, sendTelegramMessage } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const execPromise = promisify(exec);
-
-async function sendTelegram(message) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return;
-  try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
-      })
-    });
-  } catch (e) {
-    console.log(pc.red(`[!] Telegram error: ${e.message}`));
-  }
-}
-
 async function sendDiscord(title, message) {
   const url = process.env.DISCORD_WEBHOOK_URL;
   if (!url) return;
@@ -175,6 +157,50 @@ async function getAllTxtFiles(dir) {
   return files;
 }
 
+async function captureHomepage(target, screenshotPath) {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+      deviceScaleFactor: 1
+    });
+    await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.screenshot({ path: screenshotPath, type: 'png', fullPage: true });
+    return true;
+  } catch (error) {
+    console.log(pc.yellow(`[!] Homepage screenshot failed for ${target.url}: ${error.message}`));
+    return false;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+async function notifyLiveTarget(engagement, target, screenshotPath, hasScreenshot, config) {
+  if (engagement.subdomainMonitor.hideCodes?.includes(target.statusCode)) return;
+
+  const title = `New live target in ${engagement.name}`;
+  const details = `Target: ${target.url}\nStatus: ${target.statusCode}${target.title ? `\nTitle: ${target.title}` : ''}`;
+  if (config.notifications.telegram) {
+    if (hasScreenshot) {
+      await sendTelegramLocalImage(`<b>${title}</b>\n\n<code>${details}</code>`, screenshotPath);
+    } else {
+      await sendTelegramMessage(`<b>${title}</b>\n\n<code>${details}</code>`);
+    }
+  }
+  if (config.notifications.discord) {
+    if (hasScreenshot) {
+      await sendDiscordSubdomain(`**${title}**\n${details}`, screenshotPath);
+    } else {
+      await sendDiscord(title, details);
+    }
+  }
+}
+
 function getEngagementDomains(engagement) {
   const domains = new Set();
   if (Array.isArray(engagement.targets)) {
@@ -269,6 +295,15 @@ async function processSubdomainFiles() {
     `);
 
     let foundNewSubdomains = false;
+    const liveTargetsThisRun = new Map();
+    const latestDir = path.join(outputDir, 'latest');
+    const screenshotsDir = path.join(latestDir, 'screenshots');
+    await fs.mkdir(latestDir, { recursive: true });
+    if (engagement.subdomainMonitor.screenshotEnabled) {
+      await fs.rm(screenshotsDir, { recursive: true, force: true });
+      await fs.mkdir(screenshotsDir, { recursive: true });
+    }
+
     for (const filePath of txtFiles) {
       const data = await fs.readFile(filePath, 'utf-8');
       
@@ -289,29 +324,33 @@ async function processSubdomainFiles() {
       
       // Deduplicate
       const uniqueSubdomains = [...new Set(subdomains)];
+      const liveTargets = await probeLiveTargets(uniqueSubdomains);
+      for (const target of liveTargets) liveTargetsThisRun.set(target.host, target);
 
       let newCount = 0;
-      for (const subdomain of uniqueSubdomains) {
+      for (const target of liveTargets) {
+        const subdomain = target.host;
         const [rows] = await conn.query(
           `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
           [subdomain]
         );
         if (rows.length === 0) {
-          console.log(pc.green(`[+] New: ${subdomain}`));
+          console.log(pc.green(`[+] New live target: ${target.url} [${target.statusCode}]`));
           newCount++;
           foundNewSubdomains = true;
 
-          // Only notify if NOT in storeMode
+          const screenshotPath = path.join(
+            screenshotsDir,
+            `${subdomain.replace(/[^a-zA-Z0-9.-]/g, '_')}.png`
+          );
+          const hasScreenshot = engagement.subdomainMonitor.screenshotEnabled
+            ? await captureHomepage(target, screenshotPath)
+            : false;
+
           if (!engagement.subdomainMonitor.storeMode) {
-            if (config.notifications.telegram) {
-              const msg = `<b>🌐 New subdomain in ${engagement.name}</b>\n\n• <code>${subdomain}</code>\n• <i>Found by scanner</i>\n• <i>${new Date().toISOString()}</i>`;
-              await sendTelegram(msg);
-            }
-            if (config.notifications.discord) {
-              await sendDiscord(`New subdomain in ${engagement.name}`, subdomain);
-            }
+            await notifyLiveTarget(engagement, target, screenshotPath, hasScreenshot, config);
           } else {
-            console.log(pc.yellow(`[+] Storing (storeMode): ${subdomain}`));
+            console.log(pc.yellow(`[+] Storing live target (storeMode): ${subdomain}`));
           }
 
           await conn.query(
@@ -326,6 +365,12 @@ async function processSubdomainFiles() {
       }
       await fs.unlink(filePath);
     }
+
+    const latestSubdomains = [...liveTargetsThisRun.keys()].sort();
+    await fs.writeFile(
+      path.join(latestDir, 'subdomains.txt'),
+      `${latestSubdomains.join('\n')}${latestSubdomains.length ? '\n' : ''}`
+    );
 
     await conn.end();
 

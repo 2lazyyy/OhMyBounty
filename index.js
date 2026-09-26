@@ -10,6 +10,7 @@ import path from "path";
 import pc from "picocolors";
 import { exit } from "process";
 import puppeteer from "puppeteer";
+import { probeLiveTargets } from "./live-targets.js";
 import {
   sendDiscordMessage,
   sendDiscordReport,
@@ -176,7 +177,7 @@ async function checkCrowdStream(engagement) {
   }
 }
 
-async function notifySubdomain(subdomain, engagement) {
+async function notifySubdomain(subdomain, engagement, liveTarget) {
   const imgPath = path.resolve("screenshots", "screenshot.png");
   const browser = await puppeteer.launch({
     headless: true,
@@ -185,9 +186,9 @@ async function notifySubdomain(subdomain, engagement) {
   logUpdate(pc.yellow(`[+] Checking `) + pc.cyan(subdomain));
   const page = await browser.newPage();
   page.setDefaultTimeout(10 * 60 * 1000);
-  const URL = subdomain.includes("https://")
+  const URL = liveTarget?.url || (subdomain.includes("https://")
     ? subdomain
-    : `https://${subdomain}`;
+    : `https://${subdomain}`);
   try {
     let pageResponse;
     try {
@@ -276,35 +277,35 @@ async function notifySubdomain(subdomain, engagement) {
 async function processFile(filePath, engagement, connection) {
   try {
     const data = await fs.readFile(filePath, "utf-8");
-    const subdomains = data.split("\n").map((subdomain) =>
+    const subdomains = [...new Set(data.split("\n").map((subdomain) =>
       subdomain
         .trim()
         .replace(/\r?\n|\r/g, " ")
         .replace(/^https?:\/\//, "")
-    );
-    for (const subdomain of subdomains) {
-      if (subdomain) {
-        try {
-          const [rows] = await connection.query(
-            `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
+    ).filter(Boolean))];
+    const liveTargets = await probeLiveTargets(subdomains);
+    for (const liveTarget of liveTargets) {
+      const subdomain = liveTarget.host;
+      try {
+        const [rows] = await connection.query(
+          `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
+          [subdomain]
+        );
+        if (rows.length === 0) {
+          logUpdate(pc.green(`[+] New live target found: ${liveTarget.url} (${liveTarget.statusCode})`));
+          if (!engagement.subdomainMonitor.storeMode) {
+            await notifySubdomain(subdomain, engagement, liveTarget);
+          } else {
+            logUpdate(pc.yellow(`[+] Storing live target: ${subdomain}`));
+          }
+
+          await connection.query(
+            `INSERT INTO \`${engagement.engagementCode}\` (subdomain) VALUES (?)`,
             [subdomain]
           );
-          if (rows.length === 0) {
-            logUpdate(pc.green(`[+] New subdomain found: ${subdomain}`));
-            if (!engagement.subdomainMonitor.storeMode) {
-              await notifySubdomain(subdomain, engagement);
-            } else {
-              logUpdate(pc.yellow(`[+] Storing new domain: ${subdomain}`));
-            }
-
-            await connection.query(
-              `INSERT INTO \`${engagement.engagementCode}\` (subdomain) VALUES (?)`,
-              [subdomain]
-            );
-          }
-        } catch (err) {
-          console.log(err);
         }
+      } catch (err) {
+        console.log(err);
       }
     }
     await fs.unlink(filePath);
