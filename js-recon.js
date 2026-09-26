@@ -1,13 +1,20 @@
 import fs from 'node:fs/promises';
 import path from 'path';
+import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import axios from 'axios';
 import mysql from 'mysql2/promise';
 import pc from 'picocolors';
 import { fileURLToPath } from 'node:url';
-import { sendTelegramMessage } from './utils.js';
+import { sendDiscordMessage, sendTelegramMessage } from './utils.js';
+import { parseLinkFinderOutput, parseSecretFinderOutput } from './js-recon-output.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const execFilePromise = promisify(execFile);
+const missingAnalyzerWarnings = new Set();
 
 const SECRET_PATTERNS = [
   { 
@@ -93,7 +100,7 @@ async function loadCache(cachePath) {
     const raw = await fs.readFile(cachePath, 'utf-8');
     return JSON.parse(raw);
   } catch {
-    return { knownJsUrls: {}, knownSecrets: {} };
+    return { knownJsUrls: {}, knownSecrets: {}, knownEndpoints: {} };
   }
 }
 
@@ -126,7 +133,7 @@ function extractJsUrls(html, baseUrl) {
   while ((match = scriptRegex.exec(html))) {
     try {
       const absUrl = new URL(match[1], baseUrl).href;
-      if (absUrl.endsWith('.js')) urls.add(absUrl);
+      if (isJavaScriptUrl(absUrl)) urls.add(absUrl);
     } catch {}
   }
   return [...urls];
@@ -161,7 +168,8 @@ function findSecrets(text, url) {
       allFindings.push({ 
         name: pattern.name, 
         matches: validMatches.slice(0, 3),
-        url 
+        url,
+        source: 'Built-in'
       });
     }
   }
@@ -229,7 +237,59 @@ async function sendSecretNotification(engagement, finding) {
   }
 }
 
-async function scanJsFile(url, cache, allowedHosts, timeoutSeconds) {
+async function runPythonAnalyzer(scriptPath, inputPath, timeoutSeconds) {
+  try {
+    await fs.access(scriptPath);
+    const { stdout } = await execFilePromise(
+      process.env.PYTHON_BIN || 'python3',
+      [scriptPath, '-i', inputPath, '-o', 'cli'],
+      { timeout: timeoutSeconds * 1000, maxBuffer: 10 * 1024 * 1024 }
+    );
+    return stdout;
+  } catch (error) {
+    const warningKey = `${scriptPath}:${error.code || error.message}`;
+    if (!missingAnalyzerWarnings.has(warningKey)) {
+      missingAnalyzerWarnings.add(warningKey);
+      console.log(pc.yellow(`[!] JS analyzer unavailable (${scriptPath}): ${error.message}`));
+    }
+    return error.stdout?.toString() || '';
+  }
+}
+
+async function runExternalAnalyzers(content, url, jsRecon) {
+  const tempDir = await fs.mkdtemp(path.join(tmpdir(), 'ohmybounty-js-tools-'));
+  const inputPath = path.join(tempDir, 'asset.js');
+
+  try {
+    await fs.writeFile(inputPath, content, 'utf-8');
+    const timeoutSeconds = Math.max(10, Number(jsRecon.toolTimeoutSeconds) || 30);
+    const [secretOutput, linkOutput] = await Promise.all([
+      jsRecon.secretFinderEnabled === false
+        ? ''
+        : runPythonAnalyzer(
+          process.env.SECRETFINDER_SCRIPT || '/opt/SecretFinder/SecretFinder.py',
+          inputPath,
+          timeoutSeconds
+        ),
+      jsRecon.linkFinderEnabled === false
+        ? ''
+        : runPythonAnalyzer(
+          process.env.LINKFINDER_SCRIPT || '/opt/LinkFinder/linkfinder.py',
+          inputPath,
+          timeoutSeconds
+        )
+    ]);
+
+    return {
+      secretFindings: parseSecretFinderOutput(secretOutput, url),
+      linkFindings: parseLinkFinderOutput(linkOutput, url)
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function scanJsFile(url, cache, allowedHosts, timeoutSeconds, jsRecon) {
   const normalizedUrl = url.trim();
   const isKnown = Boolean(cache.knownJsUrls[normalizedUrl]);
   const content = await fetchText(normalizedUrl, timeoutSeconds);
@@ -237,8 +297,8 @@ async function scanJsFile(url, cache, allowedHosts, timeoutSeconds) {
     return null;
   }
 
+  if (!cache.knownSecrets) cache.knownSecrets = {};
   const findings = findSecrets(content, normalizedUrl);
-  
   const newFindings = [];
   for (const finding of findings) {
     for (const match of finding.matches) {
@@ -254,36 +314,219 @@ async function scanJsFile(url, cache, allowedHosts, timeoutSeconds) {
     }
   }
 
+  const knownSecretMatches = new Set(
+    Object.keys(cache.knownSecrets).map((key) => key.slice(key.indexOf(':') + 1))
+  );
+  const externalFindings = await runExternalAnalyzers(content, normalizedUrl, jsRecon);
+  const reportedSecretValues = new Set();
+  for (const finding of externalFindings.secretFindings) {
+    const match = finding.matches[0];
+    const secretKey = `SecretFinder:${finding.name}:${match}`;
+    if (cache.knownSecrets[secretKey]) continue;
+    cache.knownSecrets[secretKey] = {
+      url: normalizedUrl,
+      foundAt: new Date().toISOString()
+    };
+    if (!knownSecretMatches.has(match) && !reportedSecretValues.has(match)) {
+      newFindings.push(finding);
+      reportedSecretValues.add(match);
+    }
+  }
+
+  if (!cache.knownEndpoints) cache.knownEndpoints = {};
+  const newLinkFindings = [];
+  for (const finding of externalFindings.linkFindings) {
+    const endpointKey = `${normalizedUrl}:${finding.endpoint}`;
+    if (cache.knownEndpoints[endpointKey]) continue;
+    cache.knownEndpoints[endpointKey] = { foundAt: new Date().toISOString() };
+    newLinkFindings.push(finding);
+  }
+
   cache.knownJsUrls[normalizedUrl] = new Date().toISOString();
-  return { url: normalizedUrl, newJs: !isKnown, findings: newFindings, allFindings: findings };
+  return {
+    url: normalizedUrl,
+    content,
+    newJs: !isKnown,
+    findings: newFindings,
+    linkFindings: newLinkFindings,
+    allFindings: findings
+  };
 }
 
-async function scanDomainScripts(domain, allowedHosts, cache, timeoutSeconds) {
+function isJavaScriptUrl(value) {
+  try {
+    return /\.m?js$/i.test(new URL(value).pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function crawlJavaScriptUrls(domain, allowedHosts, timeoutSeconds, crawlDepth) {
+  const urls = new Set();
+  const tempDir = await fs.mkdtemp(path.join(tmpdir(), 'ohmybounty-katana-'));
+  const outputPath = path.join(tempDir, 'crawl.txt');
+  const escapedDomain = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const crawlScope = `^https?://([a-z0-9-]+\\.)*${escapedDomain}(:\\d+)?(/|$)`;
+
+  try {
+    await execFilePromise('katana', [
+      '-u', `https://${domain}`,
+      '-jc',
+      '-silent',
+      '-d', String(Math.max(1, Number(crawlDepth) || 3)),
+      '-timeout', String(timeoutSeconds),
+      '-cs', crawlScope,
+      '-o', outputPath
+    ], { timeout: timeoutSeconds * 1000 * 4, maxBuffer: 10 * 1024 * 1024 });
+    const output = await fs.readFile(outputPath, 'utf-8');
+    for (const line of output.split(/\r?\n/)) {
+      const url = line.trim();
+      if (isJavaScriptUrl(url) && isAllowedHost(url, allowedHosts)) {
+        urls.add(url);
+      }
+    }
+  } catch (error) {
+    console.log(pc.yellow(`[!] Katana crawl failed for ${domain}: ${error.message}`));
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+
+  return [...urls];
+}
+
+function latestJsDirectory(engagement) {
+  const baseDir = engagement.subdomainMonitor?.subdomainsDirectory
+    ? path.resolve(engagement.subdomainMonitor.subdomainsDirectory)
+    : path.resolve(__dirname, 'subdomains', engagement.engagementCode);
+  return path.join(baseDir, 'latest', 'javascript');
+}
+
+async function writeLatestJsArtifacts(engagement, domainResults) {
+  const outputDir = latestJsDirectory(engagement);
+  await fs.rm(outputDir, { recursive: true, force: true });
+  await fs.mkdir(outputDir, { recursive: true });
+
+  const urls = [...new Set(domainResults.flatMap((entry) => entry.discoveredJsUrls))].sort();
+  const assets = [];
+  const savedUrls = new Set();
+
+  for (const entry of domainResults) {
+    for (const scan of entry.scanned) {
+      if (savedUrls.has(scan.url)) continue;
+      savedUrls.add(scan.url);
+
+      const parsedUrl = new URL(scan.url);
+      const host = parsedUrl.hostname.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const name = path.basename(parsedUrl.pathname).replace(/[^a-zA-Z0-9._-]/g, '_') || 'script.js';
+      const hash = createHash('sha256').update(scan.url).digest('hex').slice(0, 12);
+      const fileName = `${host}-${hash}-${name}`;
+      await fs.writeFile(path.join(outputDir, fileName), scan.content, 'utf-8');
+      assets.push({ url: scan.url, file: fileName });
+    }
+  }
+
+  await fs.writeFile(path.join(outputDir, 'urls.txt'), `${urls.join('\n')}${urls.length ? '\n' : ''}`);
+  await fs.writeFile(path.join(outputDir, 'files.json'), JSON.stringify(assets, null, 2));
+  const findings = {
+    secrets: domainResults.flatMap((entry) => entry.secrets),
+    endpoints: domainResults.flatMap((entry) => entry.linkFindings)
+  };
+  await fs.writeFile(path.join(outputDir, 'findings.json'), JSON.stringify(findings, null, 2));
+  return { outputDir, urls };
+}
+
+async function reportJsFilesToDiscord(engagement, domainCount, outputDir, urls) {
+  if (urls.length === 0) return;
+
+  const header = `Targets scanned: ${domainCount}\nJS files found: ${urls.length}\nLatest files: ${outputDir}\n\n`;
+  const messages = [];
+  let current = header;
+  for (const url of urls) {
+    const line = `• ${url}\n`;
+    if (current.length + line.length > 3500 && current !== header) {
+      messages.push(current);
+      current = header;
+    }
+    current += line;
+  }
+  if (current !== header) messages.push(current);
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const suffix = messages.length > 1 ? ` (${index + 1}/${messages.length})` : '';
+    await sendDiscordMessage(`JavaScript files: ${engagement.name}${suffix}`, messages[index]);
+  }
+}
+
+async function reportToolFindingsToDiscord(engagement, domainResults) {
+  const secrets = domainResults.flatMap((entry) => entry.secrets);
+  const endpoints = domainResults.flatMap((entry) => entry.linkFindings);
+  const reportLines = async (title, header, lines) => {
+    if (lines.length === 0) return;
+    const messages = [];
+    let current = header;
+    for (const line of lines) {
+      const reportLine = `• ${line}\n`;
+      if (current.length + reportLine.length > 3500 && current !== header) {
+        messages.push(current);
+        current = header;
+      }
+      current += reportLine.length > 3500
+        ? `${reportLine.slice(0, 3400)}… [truncated; see latest/javascript/findings.json]\n`
+        : reportLine;
+    }
+    if (current !== header) messages.push(current);
+    for (let index = 0; index < messages.length; index += 1) {
+      const suffix = messages.length > 1 ? ` (${index + 1}/${messages.length})` : '';
+      await sendDiscordMessage(`${title}: ${engagement.name}${suffix}`, messages[index]);
+    }
+  };
+
+  await reportLines(
+    'Secrets detected',
+    `SecretFinder and built-in scan: ${secrets.length} new finding(s)\n\n`,
+    secrets.flatMap((finding) => finding.matches.map((match) =>
+      `${finding.source || 'Built-in'} / ${finding.name}: ${match}\n  JS: ${finding.url}`
+    ))
+  );
+  await reportLines(
+    'Endpoints found',
+    `LinkFinder: ${endpoints.length} new endpoint(s)\n\n`,
+    endpoints.map((finding) => `${finding.endpoint}\n  JS: ${finding.url}`)
+  );
+}
+
+async function scanDomainScripts(domain, allowedHosts, cache, timeoutSeconds, crawlDepth, jsRecon) {
   const result = {
     domain,
     scanned: [],
-    secrets: []
+    secrets: [],
+    linkFindings: [],
+    discoveredJsUrls: []
   };
 
-  const baseUrl = `https://${domain}`;
+  let baseUrl = `https://${domain}`;
   let html = await fetchText(baseUrl, timeoutSeconds);
   if (!html) {
+    baseUrl = `http://${domain}`;
     html = await fetchText(`http://${domain}`, timeoutSeconds);
   }
-  if (!html) {
-    return result;
-  }
 
-  const scriptUrls = extractJsUrls(html, baseUrl).filter((scriptUrl) =>
-    isAllowedHost(scriptUrl, allowedHosts)
-  );
+  const scriptUrls = new Set([
+    ...(html ? extractJsUrls(html, baseUrl) : []),
+    ...await crawlJavaScriptUrls(domain, allowedHosts, timeoutSeconds, crawlDepth)
+  ]);
 
   for (const scriptUrl of scriptUrls) {
-    const scan = await scanJsFile(scriptUrl, cache, allowedHosts, timeoutSeconds);
+    if (!isAllowedHost(scriptUrl, allowedHosts) || !isJavaScriptUrl(scriptUrl)) continue;
+    result.discoveredJsUrls.push(scriptUrl);
+    const scan = await scanJsFile(scriptUrl, cache, allowedHosts, timeoutSeconds, jsRecon);
     if (!scan) continue;
     result.scanned.push(scan);
     if (scan.findings.length > 0) {
       result.secrets.push(...scan.findings);
+    }
+    if (scan.linkFindings.length > 0) {
+      result.linkFindings.push(...scan.linkFindings);
     }
   }
 
@@ -291,13 +534,24 @@ async function scanDomainScripts(domain, allowedHosts, cache, timeoutSeconds) {
 }
 
 async function scanTargets(engagement, scanDomains, cache) {
-  const allowedHosts = buildAllowedHosts(engagement, scanDomains);
+  const allowedHosts = buildAllowedHosts(engagement);
   const domainResults = [];
   for (const domain of scanDomains) {
     if (!domain) continue;
     const normalized = normalizeHost(domain);
     if (!normalized) continue;
-    const result = await scanDomainScripts(normalized, allowedHosts, cache, engagement.jsRecon?.scanTimeoutSeconds || 15);
+    if (!allowedHosts.some((allowed) => normalized === allowed || normalized.endsWith(`.${allowed}`))) {
+      console.log(pc.yellow(`[!] Skipping out-of-scope JS target: ${normalized}`));
+      continue;
+    }
+    const result = await scanDomainScripts(
+      normalized,
+      allowedHosts,
+      cache,
+      engagement.jsRecon?.scanTimeoutSeconds || 15,
+      engagement.jsRecon?.crawlDepth || 3,
+      engagement.jsRecon || {}
+    );
     domainResults.push(result);
   }
   return domainResults;
@@ -319,7 +573,7 @@ function aggregateScanResults(domainResults) {
   return { newJsUrls, secretResults };
 }
 
-export async function scanNewSubdomain(engagement, subdomain) {
+export async function scanNewSubdomain(engagement, subdomain, notifications = {}) {
   if (!engagement.jsRecon?.enabled || !engagement.jsRecon.scanOnNewSubdomain) {
     return;
   }
@@ -333,6 +587,7 @@ export async function scanNewSubdomain(engagement, subdomain) {
 
   const scanDomains = [normalizedSubdomain];
   const domainResults = await scanTargets(engagement, scanDomains, cache);
+  const { outputDir, urls } = await writeLatestJsArtifacts(engagement, domainResults);
   
   for (const entry of domainResults) {
     for (const finding of entry.secrets) {
@@ -341,9 +596,13 @@ export async function scanNewSubdomain(engagement, subdomain) {
   }
   
   await saveCache(cachePath, cache);
+  if (notifications.discord) {
+    await reportJsFilesToDiscord(engagement, scanDomains.length, outputDir, urls);
+    await reportToolFindingsToDiscord(engagement, domainResults);
+  }
 }
 
-export async function runFullJsRecon(engagement) {
+export async function runFullJsRecon(engagement, notifications = {}) {
   if (!engagement.jsRecon?.enabled) {
     return;
   }
@@ -358,6 +617,7 @@ export async function runFullJsRecon(engagement) {
   }
 
   const domainResults = await scanTargets(engagement, scanDomains, cache);
+  const { outputDir, urls } = await writeLatestJsArtifacts(engagement, domainResults);
   
   for (const entry of domainResults) {
     for (const finding of entry.secrets) {
@@ -366,6 +626,11 @@ export async function runFullJsRecon(engagement) {
   }
   
   await saveCache(cachePath, cache);
+
+  if (notifications.discord) {
+    await reportJsFilesToDiscord(engagement, scanDomains.length, outputDir, urls);
+    await reportToolFindingsToDiscord(engagement, domainResults);
+  }
 
   const { newJsUrls, secretResults } = aggregateScanResults(domainResults);
   if (newJsUrls.length === 0 && secretResults.length === 0) {

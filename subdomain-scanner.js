@@ -165,7 +165,7 @@ async function getAllTxtFiles(dir) {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && entry.name !== 'latest') {
         files.push(...await getAllTxtFiles(fullPath));
       } else if (entry.isFile() && path.extname(entry.name) === '.txt') {
         files.push(fullPath);
@@ -221,21 +221,21 @@ async function runToolsForEngagement(engagement) {
         console.log(pc.red(`[!] Failed: ${e.message}`));
       }
     }
+  }
 
-    const shellScript = path.join(__dirname, 'tools', 'run-subdomain-tools.sh');
-    try {
-      await fs.access(shellScript);
-      const env = {
-        ...process.env,
-        ENGAGEMENT_CODE: engagement.engagementCode,
-        TARGET_DOMAIN: targetDomain,
-        OUTPUT_DIR: outputDir
-      };
-      await execPromise(`bash "${shellScript}"`, { timeout: 900000, env });
-      console.log(pc.green(`[+] Shell script done for ${engagement.name} (${targetDomain})`));
-    } catch (e) {
-      // Optional
-    }
+  const shellScript = path.join(__dirname, 'tools', 'run-subdomain-tools.sh');
+  try {
+    await fs.access(shellScript);
+    const env = {
+      ...process.env,
+      ENGAGEMENT_CODE: engagement.engagementCode,
+      TARGET_DOMAINS: targetDomains.join(' '),
+      OUTPUT_DIR: outputDir
+    };
+    await execPromise(`bash "${shellScript}"`, { timeout: 900000, env });
+    console.log(pc.green(`[+] Shell script done for ${engagement.name}`));
+  } catch (e) {
+    console.log(pc.red(`[!] Built-in enumeration failed: ${e.message}`));
   }
 }
 
@@ -268,6 +268,7 @@ async function processSubdomainFiles() {
       )
     `);
 
+    let foundNewSubdomains = false;
     for (const filePath of txtFiles) {
       const data = await fs.readFile(filePath, 'utf-8');
       
@@ -298,6 +299,7 @@ async function processSubdomainFiles() {
         if (rows.length === 0) {
           console.log(pc.green(`[+] New: ${subdomain}`));
           newCount++;
+          foundNewSubdomains = true;
 
           // Only notify if NOT in storeMode
           if (!engagement.subdomainMonitor.storeMode) {
@@ -316,15 +318,6 @@ async function processSubdomainFiles() {
             `INSERT INTO \`${engagement.engagementCode}\` (subdomain) VALUES (?)`,
             [subdomain]
           );
-
-          // JS recon only if enabled
-          if (engagement.jsRecon?.enabled) {
-            try {
-              await scanNewSubdomain(engagement, subdomain);
-            } catch (e) {
-              console.log(pc.red(`[!] JS recon failed for ${subdomain}: ${e.message}`));
-            }
-          }
         }
       }
 
@@ -335,6 +328,18 @@ async function processSubdomainFiles() {
     }
 
     await conn.end();
+
+    if (
+      foundNewSubdomains &&
+      engagement.jsRecon?.enabled &&
+      engagement.jsRecon?.scanOnNewSubdomain
+    ) {
+      try {
+        await runFullJsRecon(engagement, { discord: config.notifications.discord });
+      } catch (e) {
+        console.log(pc.red(`[!] Full JS recon failed for ${engagement.name}: ${e.message}`));
+      }
+    }
   }
 }
 
@@ -362,7 +367,7 @@ cron.schedule('0 */4 * * *', async () => {
   const config = await loadConfig();
   for (const e of config.engagements) {
     if (e.enabled && e.jsRecon?.enabled) {
-      await runFullJsRecon(e);
+      await runFullJsRecon(e, { discord: config.notifications.discord });
     }
   }
   console.log(pc.green('[+] Full JS recon run complete'));

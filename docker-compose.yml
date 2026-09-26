@@ -58,9 +58,8 @@ services:
     volumes:
       - ./config.json:/app/config.json:ro
       - ./js-recon.js:/app/js-recon.js:ro
-      - subdomains:/app/subdomains
+      - ./subdomains:/app/subdomains
     command: node subdomain-scanner.js
 
 volumes:
   mysql-data:
-  subdomains:

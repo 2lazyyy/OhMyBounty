@@ -23,14 +23,13 @@
         "enabled": true,
         "minimumPriorityNumber": 3,
         "filterBy": [
-          "disclosures",
-          "accepted"
+          "disclosures"
         ],
         "lastReportId": "73b8d47e-1e1c-444c-9281-b064377e967f"
       },
       "subdomainMonitor": {
         "enabled": true,
-        "storeMode": true,
+        "storeMode": false,
         "runTools": true,
         "tools": [
           "subfinder -d {domain} -all -silent -o {output}/{domain}-subfinder.txt",
@@ -45,13 +44,17 @@
       "jsRecon": {
         "enabled": true,
         "scanOnNewSubdomain": true,
-        "scanTimeoutSeconds": 15
+        "scanTimeoutSeconds": 15,
+        "crawlDepth": 3,
+        "secretFinderEnabled": true,
+        "linkFinderEnabled": true,
+        "toolTimeoutSeconds": 30
       }
     }
   ],
   "cronInterval": "*/15 * * * *",
   "notifications": {
     "telegram": true,
-    "discord": false
+    "discord": true
   }
 }

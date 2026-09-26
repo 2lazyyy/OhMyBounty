@@ -319,7 +319,7 @@ async function getAllTxtFiles(dir) {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && entry.name !== "latest") {
         files.push(...await getAllTxtFiles(fullPath));
       } else if (entry.isFile() && path.extname(entry.name) === ".txt") {
         files.push(fullPath);

@@ -64,7 +64,7 @@ export const sendDiscordMessage = async (title, message, color = 0x8a2be2) => {
       .setColor(color)
       .setDescription(message);
 
-    webhookClient.send({
+    await webhookClient.send({
       username: "OhMyBounty",
       avatarURL: "https://i.imgur.com/8uE8voU.jpeg",
       embeds: [embed],

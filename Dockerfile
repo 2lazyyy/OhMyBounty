@@ -1,3 +1,8 @@
+FROM golang:1.25-alpine AS recon-tools
+
+RUN go install github.com/projectdiscovery/katana/cmd/katana@latest \
+    && go install github.com/tomnomnom/assetfinder@latest
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -34,7 +39,19 @@ RUN curl -sL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass
     && chmod +x /usr/local/bin/amass \
     && rm /tmp/amass.zip
 
+COPY --from=recon-tools /go/bin/katana /usr/local/bin/katana
+COPY --from=recon-tools /go/bin/assetfinder /usr/local/bin/assetfinder
+
+RUN curl -fsSL https://github.com/findomain/findomain/releases/latest/download/findomain-linux -o /usr/local/bin/findomain \
+    && chmod +x /usr/local/bin/findomain
+
 RUN pip3 install sublist3r --break-system-packages
+
+RUN git clone --depth 1 https://github.com/m4ll0k/SecretFinder.git /opt/SecretFinder \
+    && git clone --depth 1 https://github.com/GerbenJavado/LinkFinder.git /opt/LinkFinder \
+    && pip3 install --break-system-packages \
+        -r /opt/SecretFinder/requirements.txt \
+        -r /opt/LinkFinder/requirements.txt
 
 WORKDIR /app
 
