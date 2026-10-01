@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseHttpxOutput } from '../live-targets.js';
+import { parseHttpxOutput, probeLiveTargets } from '../live-targets.js';
+
+test('handles httpx timeouts without crashing the scanner', async () => {
+  const result = await probeLiveTargets(['example.com'], {
+    execFileFn: async () => {
+      const error = new Error('timed out');
+      error.code = 'ETIMEDOUT';
+      throw error;
+    }
+  });
+
+  assert.deepEqual(result, []);
+});
 
 test('accepts only candidate hosts with valid HTTP response status', () => {
   const output = [

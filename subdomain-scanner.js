@@ -305,65 +305,74 @@ async function processSubdomainFiles() {
     }
 
     for (const filePath of txtFiles) {
-      const data = await fs.readFile(filePath, 'utf-8');
-      
-      // Extract and validate each line
-      const rawLines = data.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0);
-      
-      const subdomains = [];
-      for (const line of rawLines) {
-        const extracted = extractDomain(line);
-        if (extracted && isValidSubdomain(extracted)) {
-          subdomains.push(extracted);
-        } else {
-          console.log(pc.gray(`[-] Filtered out: ${line.slice(0, 80)}`));
-        }
-      }
-      
-      // Deduplicate
-      const uniqueSubdomains = [...new Set(subdomains)];
-      const liveTargets = await probeLiveTargets(uniqueSubdomains);
-      for (const target of liveTargets) liveTargetsThisRun.set(target.host, target);
+      try {
+        const data = await fs.readFile(filePath, 'utf-8');
 
-      let newCount = 0;
-      for (const target of liveTargets) {
-        const subdomain = target.host;
-        const [rows] = await conn.query(
-          `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
-          [subdomain]
-        );
-        if (rows.length === 0) {
-          console.log(pc.green(`[+] New live target: ${target.url} [${target.statusCode}]`));
-          newCount++;
-          foundNewSubdomains = true;
+        // Extract and validate each line
+        const rawLines = data.split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
 
-          const screenshotPath = path.join(
-            screenshotsDir,
-            `${subdomain.replace(/[^a-zA-Z0-9.-]/g, '_')}.png`
-          );
-          const hasScreenshot = engagement.subdomainMonitor.screenshotEnabled
-            ? await captureHomepage(target, screenshotPath)
-            : false;
-
-          if (!engagement.subdomainMonitor.storeMode) {
-            await notifyLiveTarget(engagement, target, screenshotPath, hasScreenshot, config);
+        const subdomains = [];
+        for (const line of rawLines) {
+          const extracted = extractDomain(line);
+          if (extracted && isValidSubdomain(extracted)) {
+            subdomains.push(extracted);
           } else {
-            console.log(pc.yellow(`[+] Storing live target (storeMode): ${subdomain}`));
+            console.log(pc.gray(`[-] Filtered out: ${line.slice(0, 80)}`));
           }
+        }
 
-          await conn.query(
-            `INSERT INTO \`${engagement.engagementCode}\` (subdomain) VALUES (?)`,
+        // Deduplicate
+        const uniqueSubdomains = [...new Set(subdomains)];
+        const liveTargets = await probeLiveTargets(uniqueSubdomains);
+        for (const target of liveTargets) liveTargetsThisRun.set(target.host, target);
+
+        let newCount = 0;
+        for (const target of liveTargets) {
+          const subdomain = target.host;
+          const [rows] = await conn.query(
+            `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
             [subdomain]
           );
+          if (rows.length === 0) {
+            console.log(pc.green(`[+] New live target: ${target.url} [${target.statusCode}]`));
+            newCount++;
+            foundNewSubdomains = true;
+
+            const screenshotPath = path.join(
+              screenshotsDir,
+              `${subdomain.replace(/[^a-zA-Z0-9.-]/g, '_')}.png`
+            );
+            const hasScreenshot = engagement.subdomainMonitor.screenshotEnabled
+              ? await captureHomepage(target, screenshotPath)
+              : false;
+
+            if (!engagement.subdomainMonitor.storeMode) {
+              await notifyLiveTarget(engagement, target, screenshotPath, hasScreenshot, config);
+            } else {
+              console.log(pc.yellow(`[+] Storing live target (storeMode): ${subdomain}`));
+            }
+
+            await conn.query(
+              `INSERT INTO \`${engagement.engagementCode}\` (subdomain) VALUES (?)`,
+              [subdomain]
+            );
+          }
+        }
+
+        if (newCount > 0) {
+          console.log(pc.green(`[+] ${engagement.name}: ${newCount} new subdomains inserted`));
+        }
+      } catch (error) {
+        console.log(pc.red(`[!] Failed to process subdomain file ${filePath}: ${error.message}`));
+      } finally {
+        try {
+          await fs.unlink(filePath);
+        } catch (error) {
+          console.log(pc.gray(`[i] File already processed or missing: ${filePath}`));
         }
       }
-
-      if (newCount > 0) {
-        console.log(pc.green(`[+] ${engagement.name}: ${newCount} new subdomains inserted`));
-      }
-      await fs.unlink(filePath);
     }
 
     const latestSubdomains = [...liveTargetsThisRun.keys()].sort();

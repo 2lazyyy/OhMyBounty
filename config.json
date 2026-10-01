@@ -35,7 +35,7 @@
           "subfinder -d {domain} -all -silent -o {output}/{domain}-subfinder.txt",
           "assetfinder --subs-only {domain} > {output}/{domain}-assetfinder.txt",
           "findomain -t {domain} -q > {output}/{domain}-findomain.txt",
-          "amass enum -passive -d {domain} -o {output}/{domain}-amass.txt",
+          "amass enum -passive -d {domain} -oA {output}/{domain}-amass",
           "sublist3r -d {domain} -o {output}/{domain}-sublist3r_raw.txt",
           "curl -s \"https://crt.sh/?q=%25.{domain}&output=json\" | jq -r '.[].name_value' | sed 's/^\\*\\.//g' | sort -u > {output}/{domain}-crtsh.txt"
         ],

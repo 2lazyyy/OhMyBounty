@@ -49,14 +49,24 @@ export function parseHttpxOutput(output, candidates) {
   return [...liveTargets.values()];
 }
 
-export async function probeLiveTargets(candidates) {
-  if (candidates.length === 0) return [];
+export async function probeLiveTargets(candidates, options = {}) {
+  const uniqueCandidates = [...new Set(
+    (candidates || [])
+      .map((candidate) => (typeof candidate === 'string' ? candidate.trim() : ''))
+      .filter(Boolean)
+      .map((candidate) => normalizeHost(candidate) || candidate)
+      .filter(Boolean)
+  )];
+
+  if (uniqueCandidates.length === 0) return [];
 
   const tempDir = await fs.mkdtemp(path.join(tmpdir(), 'omb-httpx-'));
   const inputPath = path.join(tempDir, 'candidates.txt');
+  const execFileFn = options.execFileFn || execFilePromise;
+
   try {
-    await fs.writeFile(inputPath, `${candidates.join('\n')}\n`, 'utf-8');
-    const { stdout } = await execFilePromise('httpx', [
+    await fs.writeFile(inputPath, `${uniqueCandidates.join('\n')}\n`, 'utf-8');
+    const { stdout } = await execFileFn('httpx', [
       '-l', inputPath,
       '-silent',
       '-no-color',
@@ -64,7 +74,17 @@ export async function probeLiveTargets(candidates) {
       '-status-code',
       '-title'
     ], { timeout: 120000, maxBuffer: 20 * 1024 * 1024 });
-    return parseHttpxOutput(stdout, candidates);
+    return parseHttpxOutput(stdout, uniqueCandidates);
+  } catch (error) {
+    const message = error && typeof error.message === 'string' ? error.message : String(error);
+    const code = error && typeof error.code === 'string' ? error.code.toUpperCase() : '';
+    if (code.includes('TIMEOUT') || code.includes('ENOENT') || code.includes('EACCES') || code.includes('ECONN') || /timed out|not found|required dependencies were not installed|command failed/i.test(message)) {
+      console.warn(`[!] httpx probe failed for ${uniqueCandidates.length} candidates: ${message}`);
+      return [];
+    }
+
+    console.warn(`[!] httpx probe failed unexpectedly for ${uniqueCandidates.length} candidates: ${message}`);
+    return [];
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

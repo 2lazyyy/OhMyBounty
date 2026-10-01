@@ -50,21 +50,34 @@ export const sendTelegramLocalImage = async (message, imagePath) => {
     console.error("Error sending image", error);
   }
 };
+const getDiscordWebhookUrl = () => {
+  const url = process.env.DISCORD_WEBHOOK_URL?.trim();
+  if (!url) return "";
+
+  const isValidWebhook = /https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\//i.test(url);
+  return isValidWebhook ? url : "";
+};
+
+const sendDiscordPayload = async (payload) => {
+  const webhookUrl = getDiscordWebhookUrl();
+  if (!webhookUrl) {
+    console.warn("[!] Discord webhook URL is missing or invalid. Skipping Discord notification.");
+    return false;
+  }
+
+  const webhookClient = new WebhookClient({ url: webhookUrl });
+  await webhookClient.send(payload);
+  return true;
+};
+
 export const sendDiscordMessage = async (title, message, color = 0x8a2be2) => {
   try {
-    const webhookClient = new WebhookClient({
-      url: process.env.DISCORD_WEBHOOK_URL || "",
-    });
-
-    if (!webhookClient) {
-      throw Error("Webhook client not defined.");
-    }
     const embed = new EmbedBuilder()
       .setTitle(title)
       .setColor(color)
       .setDescription(message);
 
-    await webhookClient.send({
+    await sendDiscordPayload({
       username: "OhMyBounty",
       avatarURL: "https://i.imgur.com/8uE8voU.jpeg",
       embeds: [embed],
@@ -76,17 +89,13 @@ export const sendDiscordMessage = async (title, message, color = 0x8a2be2) => {
 
 export const sendDiscordReport = async (engagement, report) => {
   try {
-    const webhookClient = new WebhookClient({
-      url: process.env.DISCORD_WEBHOOK_URL || "",
-    });
-
     const bugcrowdColors = [
-      null, // Índice 0 (no se usa)
-      0xff0000, // P1 - Red
-      0xff8000, // P2 - Orange
-      0xffff00, // P3 - Yellow
-      0x00ff00, // P4 - Green
-      0x0000ff, // P5 - Blue
+      null,
+      0xff0000,
+      0xff8000,
+      0xffff00,
+      0x00ff00,
+      0x0000ff,
     ];
 
     const embed = new EmbedBuilder()
@@ -113,7 +122,7 @@ export const sendDiscordReport = async (engagement, report) => {
       .setThumbnail(report.logo_url || "https://i.imgur.com/AfFp7pu.png")
       .setTimestamp();
 
-    await webhookClient.send({
+    await sendDiscordPayload({
       username: "OhMyBounty",
       avatarURL: "https://i.imgur.com/8uE8voU.jpeg",
       embeds: [embed],
@@ -125,19 +134,15 @@ export const sendDiscordReport = async (engagement, report) => {
 
 export const sendDiscordSubdomain = async (message, localImage) => {
   try {
-    const webhookClient = new WebhookClient({
-      url: process.env.DISCORD_WEBHOOK_URL || "",
-    });
-
     const attachment = new AttachmentBuilder(
       fs.readFileSync(localImage),
       { name: "live-target.png" }
     );
-    await webhookClient.send({
+
+    await sendDiscordPayload({
       username: "OhMyBounty",
       avatarURL: "https://i.imgur.com/8uE8voU.jpeg",
       content: message,
-
       files: [attachment],
     });
   } catch (e) {
