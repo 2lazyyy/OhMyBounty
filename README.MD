@@ -99,11 +99,7 @@ Configure your `config.json` file to specify which Bugcrowd programs and feature
 
         "storeMode": true, // Just store subdomains in DB (for new runing with empty DB)
 
-        "subdomainsDirectory": "/home/user/kpk0/bb/nasa-vdp/scans", // The dir where your tools will output the .txt files, NOT recursively, just one level
-
-        "screenshotEnabled": true, // Getting web preview image on messages or not,
-        
-        "hideCodes": [404, 403, 500] // Blacklist status codes
+        "subdomainsDirectory": "/home/user/kpk0/bb/nasa-vdp/scans" // The dir where your tools will output the .txt files, NOT recursively, just one level
       }
     }
   ],
@@ -140,12 +136,11 @@ MYSQL_DATABASE=omb
 > [!WARNING]  
 > Ensure that the database exists, the tables are created by OMB.
 
-The Docker scanner runs Subfinder, Assetfinder, Findomain, Amass, Sublist3r, and crt.sh for each configured target domain. ProjectDiscovery httpx probes candidates before they are stored, so only hosts with an HTTP response enter the database. Newly live hosts can be screenshotted with Puppeteer when `screenshotEnabled` is true; screenshots are attached to enabled Telegram/Discord notifications and saved under `latest/screenshots/`. Katana crawls in-scope subdomains for JavaScript files using `jsRecon.crawlDepth` (default `3`). SecretFinder scans the fetched files for sensitive values; LinkFinder extracts endpoints and paths. Their new findings are reported separately in Discord and deduplicated between runs.
+The Docker scanner runs Subfinder, Assetfinder, Findomain, Amass, Sublist3r, and crt.sh for each configured target domain. Each newly discovered in-scope subdomain is stored in MySQL and reported to enabled Telegram/Discord notifications without an HTTP liveness check; discovered hosts may not serve HTTP or be currently reachable. Katana crawls known subdomains for JavaScript files using `jsRecon.crawlDepth` (default `3`). SecretFinder scans the fetched files for sensitive values; LinkFinder extracts endpoints and paths. Their new findings are reported separately in Discord and deduplicated between runs.
 
 With Docker Compose, the latest artifacts are available on the host at `./subdomains/<engagementCode>/latest/`:
 
 - `subdomains.txt` is replaced after each enumeration run.
-- `screenshots/` contains homepage screenshots from the latest subdomain processing batch.
 - `javascript/urls.txt` lists JavaScript URLs found by the latest JS recon run.
 - `javascript/` contains fetched JS files and a `files.json` URL-to-file mapping.
 - `javascript/findings.json` contains newly detected secrets and endpoints from the latest run.

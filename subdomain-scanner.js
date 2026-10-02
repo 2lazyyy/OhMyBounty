@@ -9,8 +9,7 @@ import pc from 'picocolors';
 import puppeteer from 'puppeteer';
 import { fileURLToPath } from 'node:url';
 import { runFullJsRecon } from './js-recon.js';
-import { probeLiveTargets } from './live-targets.js';
-import { sendDiscordSubdomain, sendTelegramLocalImage, sendTelegramMessage } from './utils.js';
+import { sendTelegramMessage } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -157,47 +156,14 @@ async function getAllTxtFiles(dir) {
   return files;
 }
 
-async function captureHomepage(target, screenshotPath) {
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    const page = await browser.newPage({
-      viewport: { width: 1440, height: 1000 },
-      deviceScaleFactor: 1
-    });
-    await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await page.screenshot({ path: screenshotPath, type: 'png', fullPage: true });
-    return true;
-  } catch (error) {
-    console.log(pc.yellow(`[!] Homepage screenshot failed for ${target.url}: ${error.message}`));
-    return false;
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
-}
-
-async function notifyLiveTarget(engagement, target, screenshotPath, hasScreenshot, config) {
-  if (engagement.subdomainMonitor.hideCodes?.includes(target.statusCode)) return;
-
-  const title = `New live target in ${engagement.name}`;
-  const details = `Target: ${target.url}\nStatus: ${target.statusCode}${target.title ? `\nTitle: ${target.title}` : ''}`;
+async function notifyNewSubdomain(engagement, subdomain, config) {
+  const title = `New subdomain found in ${engagement.name}`;
+  const details = `Subdomain: ${subdomain}`;
   if (config.notifications.telegram) {
-    if (hasScreenshot) {
-      await sendTelegramLocalImage(`<b>${title}</b>\n\n<code>${details}</code>`, screenshotPath);
-    } else {
-      await sendTelegramMessage(`<b>${title}</b>\n\n<code>${details}</code>`);
-    }
+    await sendTelegramMessage(`<b>${title}</b>\n\n<code>${details}</code>`);
   }
   if (config.notifications.discord) {
-    if (hasScreenshot) {
-      await sendDiscordSubdomain(`**${title}**\n${details}`, screenshotPath);
-    } else {
-      await sendDiscord(title, details);
-    }
+    await sendDiscord(title, details);
   }
 }
 
@@ -295,14 +261,9 @@ async function processSubdomainFiles() {
     `);
 
     let foundNewSubdomains = false;
-    const liveTargetsThisRun = new Map();
+    const discoveredSubdomainsThisRun = new Set();
     const latestDir = path.join(outputDir, 'latest');
-    const screenshotsDir = path.join(latestDir, 'screenshots');
     await fs.mkdir(latestDir, { recursive: true });
-    if (engagement.subdomainMonitor.screenshotEnabled) {
-      await fs.rm(screenshotsDir, { recursive: true, force: true });
-      await fs.mkdir(screenshotsDir, { recursive: true });
-    }
 
     for (const filePath of txtFiles) {
       try {
@@ -325,31 +286,19 @@ async function processSubdomainFiles() {
 
         // Deduplicate
         const uniqueSubdomains = [...new Set(subdomains)];
-        const liveTargets = await probeLiveTargets(uniqueSubdomains);
-        for (const target of liveTargets) liveTargetsThisRun.set(target.host, target);
+        for (const subdomain of uniqueSubdomains) {
+          discoveredSubdomainsThisRun.add(subdomain);
 
-        let newCount = 0;
-        for (const target of liveTargets) {
-          const subdomain = target.host;
           const [rows] = await conn.query(
             `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
             [subdomain]
           );
           if (rows.length === 0) {
-            console.log(pc.green(`[+] New live target: ${target.url} [${target.statusCode}]`));
-            newCount++;
+            console.log(pc.green(`[+] New subdomain discovered: ${subdomain}`));
             foundNewSubdomains = true;
 
-            const screenshotPath = path.join(
-              screenshotsDir,
-              `${subdomain.replace(/[^a-zA-Z0-9.-]/g, '_')}.png`
-            );
-            const hasScreenshot = engagement.subdomainMonitor.screenshotEnabled
-              ? await captureHomepage(target, screenshotPath)
-              : false;
-
             if (!engagement.subdomainMonitor.storeMode) {
-              await notifyLiveTarget(engagement, target, screenshotPath, hasScreenshot, config);
+              await notifyNewSubdomain(engagement, subdomain, config);
             } else {
               console.log(pc.yellow(`[+] Storing live target (storeMode): ${subdomain}`));
             }
@@ -361,8 +310,8 @@ async function processSubdomainFiles() {
           }
         }
 
-        if (newCount > 0) {
-          console.log(pc.green(`[+] ${engagement.name}: ${newCount} new subdomains inserted`));
+        if (uniqueSubdomains.length > 0) {
+          console.log(pc.green(`[+] ${engagement.name}: processed ${uniqueSubdomains.length} discovered subdomains`));
         }
       } catch (error) {
         console.log(pc.red(`[!] Failed to process subdomain file ${filePath}: ${error.message}`));
@@ -375,7 +324,7 @@ async function processSubdomainFiles() {
       }
     }
 
-    const latestSubdomains = [...liveTargetsThisRun.keys()].sort();
+    const latestSubdomains = [...discoveredSubdomainsThisRun].sort();
     await fs.writeFile(
       path.join(latestDir, 'subdomains.txt'),
       `${latestSubdomains.join('\n')}${latestSubdomains.length ? '\n' : ''}`

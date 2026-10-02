@@ -44,33 +44,12 @@ for TARGET_DOMAIN in $TARGET_DOMAINS; do
     done < <(cat "$TMP_DIR"/*.txt 2>/dev/null | sort -u)
 done
 
-sort -u "$TMP_DIR/all-subdomains.txt" > "$TMP_DIR/candidates.txt"
-if [ -s "$TMP_DIR/candidates.txt" ]; then
-    CANDIDATE_COUNT=$(wc -l < "$TMP_DIR/candidates.txt" | tr -d ' ')
-    echo "[i] Probing $CANDIDATE_COUNT discovered candidates with httpx"
-    httpx -l "$TMP_DIR/candidates.txt" -silent -no-color -timeout 10 -retries 1 > "$TMP_DIR/live-urls.txt"
-else
-    echo "[i] No in-scope candidates to probe with httpx"
-    : > "$TMP_DIR/live-urls.txt"
-fi
-
-: > "$TMP_DIR/live-hosts.txt"
-while IFS= read -r live_url; do
-    live_host=$(printf '%s' "$live_url" | sed -E 's#^https?://##I; s#/.*$##; s/:[0-9]+$//')
-    live_host=$(printf '%s' "$live_host" | tr '[:upper:]' '[:lower:]')
-    for TARGET_DOMAIN in $TARGET_DOMAINS; do
-        case "$live_host" in
-            "$TARGET_DOMAIN"|*."$TARGET_DOMAIN") printf '%s\n' "$live_host" >> "$TMP_DIR/live-hosts.txt" ;;
-        esac
-    done
-done < "$TMP_DIR/live-urls.txt"
-
-sort -u "$TMP_DIR/live-hosts.txt" > "$FINAL_FILE"
+sort -u "$TMP_DIR/all-subdomains.txt" > "$FINAL_FILE"
 cp "$FINAL_FILE" "$LATEST_DIR/subdomains.txt.tmp"
 mv "$LATEST_DIR/subdomains.txt.tmp" "$LATEST_DIR/subdomains.txt"
 
 COUNT=$(wc -l < "$FINAL_FILE" | tr -d ' ')
-echo "[+] Found $COUNT subdomains -> $FINAL_FILE"
+echo "[+] Discovered $COUNT in-scope subdomains -> $FINAL_FILE"
 echo "[+] Latest subdomain inventory -> $LATEST_DIR/subdomains.txt"
 
 rm -rf "$TMP_DIR"

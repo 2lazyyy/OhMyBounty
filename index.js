@@ -9,13 +9,9 @@ import { fileURLToPath } from "node:url";
 import path from "path";
 import pc from "picocolors";
 import { exit } from "process";
-import puppeteer from "puppeteer";
-import { probeLiveTargets } from "./live-targets.js";
 import {
   sendDiscordMessage,
   sendDiscordReport,
-  sendDiscordSubdomain,
-  sendTelegramLocalImage,
   sendTelegramMessage,
   sendTelegramMessageWithImage,
   wait,
@@ -177,100 +173,14 @@ async function checkCrowdStream(engagement) {
   }
 }
 
-async function notifySubdomain(subdomain, engagement, liveTarget) {
-  const imgPath = path.resolve("screenshots", "screenshot.png");
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--start-maximized", "--no-sandbox", "--disable-setuid-sandbox"],
-  });
-  logUpdate(pc.yellow(`[+] Checking `) + pc.cyan(subdomain));
-  const page = await browser.newPage();
-  page.setDefaultTimeout(10 * 60 * 1000);
-  const URL = liveTarget?.url || (subdomain.includes("https://")
-    ? subdomain
-    : `https://${subdomain}`);
-  try {
-    let pageResponse;
-    try {
-      pageResponse = await page.goto(URL, {
-        waitUntil: "networkidle2",
-      });
-    } catch (err) {
-      console.log(pc.red(`[!] Timeout error for ${subdomain}`), err);
-      await browser.close();
-      return;
-    }
-    logUpdate(pc.green(`[+] ${subdomain} is up`));
-
-    if (engagement.subdomainMonitor.screenshotEnabled) {
-      await page.screenshot({
-        type: "png",
-        path: path.join("screenshots", "screenshot.png"),
-      });
-    }
-    await browser.close();
-    const headers = pageResponse.headers();
-    if (engagement.subdomainMonitor.hideCodes.includes(pageResponse.status())) {
-      logUpdate(
-        pc.return(
-          `[!] Status code ${pageResponse.status()} is in the hide list`
-        )
-      );
-      return;
-    }
-    if (config.notifications.telegram) {
-      logUpdate(pc.yellow(`[+] Sending notification to Telegram`));
-      let message = `<b>🌐 New active subdomain found in <a href="https://bugcrowd.com/engagements/${engagement.engagementCode}">${engagement.name}</a> </b>\n\n`;
-      message += `•<i> <a href="${URL}">${subdomain}</a> </i>\n`;
-      message += `•<i> Status:</i> ${
-        pageResponse.status() + " " + pageResponse.statusText()
-      }\n`;
-      message += `•<i> Response Time:</i> ${
-        pageResponse.timing().receiveHeadersEnd
-      } ms\n`;
-      message += `•<i> Address:</i> ${
-        pageResponse.remoteAddress().ip +
-        ":" +
-        pageResponse.remoteAddress().port
-      } \n`;
-      message += `•<i> Server:</i> ${headers["server"]}\n`;
-      message += `•<i> Content-Type:</i> ${headers["content-type"]}\n`;
-      engagement.subdomainMonitor.screenshotEnabled
-        ? await sendTelegramLocalImage(message, imgPath)
-        : await sendTelegramMessage(message);
-    }
-    if (config.notifications.discord) {
-      logUpdate(pc.yellow(`[+] Sending notification to Discord`));
-      let messageMd;
-      let title = `**🌐 New active subdomain found in [${engagement.name}](https://bugcrowd.com/engagements/${engagement.engagementCode})**\n`;
-      if (engagement.subdomainMonitor.screenshotEnabled) {
-        messageMd += title;
-      }
-      messageMd = `• *[${subdomain}](${URL})*\n`;
-      messageMd += `• *Status:* ${pageResponse.status()} ${pageResponse.statusText()}\n`;
-      messageMd += `• *Response Time:* ${
-        pageResponse.timing().receiveHeadersEnd
-      } ms\n`;
-      messageMd += `• *Address:* ${pageResponse.remoteAddress().ip}:${
-        pageResponse.remoteAddress().port
-      }\n`;
-      messageMd += `• *Server:* ${headers["server"]}\n`;
-      messageMd += `• *Content-Type:* ${headers["content-type"]}\n`;
-      messageMd =
-        messageMd.length >= 250 ? messageMd.slice(0, 250) + "..." : messageMd;
-      engagement.subdomainMonitor.screenshotEnabled
-        ? await sendDiscordSubdomain(messageMd, imgPath)
-        : await sendDiscordMessage(title, messageMd);
-    }
-  } catch (err) {
-    console.log(err);
-  } finally {
-    try {
-      await browser.close();
-    } catch (e) {}
-    try {
-      await fs.unlink(imgPath);
-    } catch (err) {}
+async function notifySubdomain(subdomain, engagement) {
+  const title = `New subdomain found in ${engagement.name}`;
+  const message = `Subdomain: ${subdomain}`;
+  if (config.notifications.telegram) {
+    await sendTelegramMessage(`<b>${title}</b>\n\n<code>${subdomain}</code>`);
+  }
+  if (config.notifications.discord) {
+    await sendDiscordMessage(title, message);
   }
 }
 
@@ -283,18 +193,16 @@ async function processFile(filePath, engagement, connection) {
         .replace(/\r?\n|\r/g, " ")
         .replace(/^https?:\/\//, "")
     ).filter(Boolean))];
-    const liveTargets = await probeLiveTargets(subdomains);
-    for (const liveTarget of liveTargets) {
-      const subdomain = liveTarget.host;
+    for (const subdomain of subdomains) {
       try {
         const [rows] = await connection.query(
           `SELECT * FROM \`${engagement.engagementCode}\` WHERE subdomain = ?`,
           [subdomain]
         );
         if (rows.length === 0) {
-          logUpdate(pc.green(`[+] New live target found: ${liveTarget.url} (${liveTarget.statusCode})`));
+          logUpdate(pc.green(`[+] New subdomain discovered: ${subdomain}`));
           if (!engagement.subdomainMonitor.storeMode) {
-            await notifySubdomain(subdomain, engagement, liveTarget);
+            await notifySubdomain(subdomain, engagement);
           } else {
             logUpdate(pc.yellow(`[+] Storing live target: ${subdomain}`));
           }

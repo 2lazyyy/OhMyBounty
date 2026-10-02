@@ -39,9 +39,7 @@
           "sublist3r -d {domain} -o {output}/{domain}-sublist3r_raw.txt",
           "curl -s \"https://crt.sh/?q=%25.{domain}&output=json\" | jq -r '.[].name_value' | sed 's/^\\*\\.//g' | sort -u > {output}/{domain}-crtsh.txt"
         ],
-        "subdomainsDirectory": "/app/subdomains/nasa-vdp",
-        "screenshotEnabled": true,
-        "hideCodes": [404,403,500,401,503]
+        "subdomainsDirectory": "/app/subdomains/nasa-vdp"
       },
       "jsRecon": {
         "enabled": true,

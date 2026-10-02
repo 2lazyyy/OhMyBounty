@@ -1,7 +1,6 @@
 FROM golang:1.26-alpine AS recon-tools
 
 RUN go install github.com/projectdiscovery/katana/cmd/katana@latest \
-    && go install github.com/projectdiscovery/httpx/cmd/httpx@latest \
     && go install github.com/tomnomnom/assetfinder@latest
 
 FROM ubuntu:24.04
@@ -45,7 +44,6 @@ RUN curl -fsSL https://github.com/owasp-amass/amass/releases/download/v5.1.1/ama
     && rm -f /tmp/amass.tar.gz
 
 COPY --from=recon-tools /go/bin/katana /usr/local/bin/katana
-COPY --from=recon-tools /go/bin/httpx /usr/local/bin/httpx
 COPY --from=recon-tools /go/bin/assetfinder /usr/local/bin/assetfinder
 
 RUN curl -fsSL https://github.com/Findomain/Findomain/releases/download/10.0.1/findomain-linux.zip -o /tmp/findomain.zip \
