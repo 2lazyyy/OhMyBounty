@@ -71,13 +71,6 @@ function extractDomain(line) {
   // Remove https:// or http:// prefix
   value = value.replace(/^https?:\/\//i, '');
   
-  // Handle amass output: "domain.com (FQDN) --> relation --> target.com (FQDN)"
-  // Extract the last domain-like token before any (TYPE) annotation
-  const amassMatch = value.match(/([a-zA-Z0-9][a-zA-Z0-9\-_]*\.[a-zA-Z0-9][a-zA-Z0-9\-_]*\.[a-zA-Z]{2,})(?:\s*\([^)]+\))?$/);
-  if (amassMatch) {
-    value = amassMatch[1];
-  }
-  
   // Remove any trailing path, query params, or fragments
   value = value.split('/')[0].split('?')[0].split('#')[0];
   
@@ -111,7 +104,7 @@ function isValidSubdomain(value) {
   if (/\(\s*ASN\s*\)/i.test(trimmed)) return false;
   if (/^\d+\s+\(ASN\)/i.test(trimmed)) return false;
   
-  // Reject anything with parentheses (amass metadata)
+  // Reject tool metadata rather than hostnames.
   if (/\([^)]+\)/.test(trimmed)) return false;
   
   // Must contain at least one dot (domain.tld)

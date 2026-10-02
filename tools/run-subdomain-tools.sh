@@ -18,7 +18,6 @@ for TARGET_DOMAIN in $TARGET_DOMAINS; do
     subfinder -d "$TARGET_DOMAIN" -all -silent -o "$TMP_DIR/${SAFE_DOMAIN}-subfinder.txt" 2>/dev/null || true
     assetfinder --subs-only "$TARGET_DOMAIN" > "$TMP_DIR/${SAFE_DOMAIN}-assetfinder.txt" 2>/dev/null || true
     findomain -t "$TARGET_DOMAIN" -q > "$TMP_DIR/${SAFE_DOMAIN}-findomain.txt" 2>/dev/null || true
-    amass enum -passive -d "$TARGET_DOMAIN" -oA "$TMP_DIR/${SAFE_DOMAIN}-amass" 2>/dev/null || true
     sublist3r -d "$TARGET_DOMAIN" -o "$TMP_DIR/${SAFE_DOMAIN}-sublist3r.txt" 2>/dev/null || true
 
     echo "[i] Querying crt.sh for $TARGET_DOMAIN"

@@ -35,14 +35,6 @@ RUN curl -fsSL https://github.com/projectdiscovery/subfinder/releases/download/v
     && install -m 0755 "$SUBFINDER_BINARY" /usr/local/bin/subfinder \
     && rm -rf /tmp/subfinder /tmp/subfinder.zip
 
-# Install amass (pre-built gzip tarball)
-RUN curl -fsSL https://github.com/owasp-amass/amass/releases/download/v5.1.1/amass_linux_amd64.tar.gz -o /tmp/amass.tar.gz \
-    && tar -xzf /tmp/amass.tar.gz -C /tmp \
-    && AMASS_BINARY="$(find /tmp -type f -name amass -print -quit)" \
-    && test -n "$AMASS_BINARY" \
-    && install -m 0755 "$AMASS_BINARY" /usr/local/bin/amass \
-    && rm -f /tmp/amass.tar.gz
-
 COPY --from=recon-tools /go/bin/katana /usr/local/bin/katana
 COPY --from=recon-tools /go/bin/assetfinder /usr/local/bin/assetfinder
 

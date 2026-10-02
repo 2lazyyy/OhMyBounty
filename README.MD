@@ -136,7 +136,7 @@ MYSQL_DATABASE=omb
 > [!WARNING]  
 > Ensure that the database exists, the tables are created by OMB.
 
-The Docker scanner runs Subfinder, Assetfinder, Findomain, Amass, Sublist3r, and crt.sh for each configured target domain. Each newly discovered in-scope subdomain is stored in MySQL and reported to enabled Telegram/Discord notifications without an HTTP liveness check; discovered hosts may not serve HTTP or be currently reachable. Katana crawls known subdomains for JavaScript files using `jsRecon.crawlDepth` (default `3`). SecretFinder scans the fetched files for sensitive values; LinkFinder extracts endpoints and paths. Their new findings are reported separately in Discord and deduplicated between runs.
+The Docker scanner runs Subfinder, Assetfinder, Findomain, Sublist3r, and crt.sh for each configured target domain. Each newly discovered in-scope subdomain is stored in MySQL and reported to enabled Telegram/Discord notifications without an HTTP liveness check; discovered hosts may not serve HTTP or be currently reachable. Katana crawls known subdomains for JavaScript files using `jsRecon.crawlDepth` (default `3`). SecretFinder scans the fetched files for sensitive values; LinkFinder extracts endpoints and paths. Their new findings are reported separately in Discord and deduplicated between runs.
 
 With Docker Compose, the latest artifacts are available on the host at `./subdomains/<engagementCode>/latest/`:
 
