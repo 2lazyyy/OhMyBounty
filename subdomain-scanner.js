@@ -2,8 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'path';
 import mysql from 'mysql2/promise';
 import cron from 'node-cron';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import 'dotenv/config';
 import pc from 'picocolors';
 import puppeteer from 'puppeteer';
@@ -13,7 +12,6 @@ import { sendTelegramMessage } from './utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const execPromise = promisify(exec);
 async function sendDiscord(title, message) {
   const url = process.env.DISCORD_WEBHOOK_URL;
   if (!url) return;
@@ -184,7 +182,6 @@ function getEngagementDomains(engagement) {
 async function runToolsForEngagement(engagement) {
   if (!engagement.subdomainMonitor?.runTools) return;
 
-  const tools = engagement.subdomainMonitor.tools || [];
   const outputDir = engagement.subdomainMonitor.subdomainsDirectory;
   const targetDomains = getEngagementDomains(engagement);
 
@@ -193,20 +190,6 @@ async function runToolsForEngagement(engagement) {
   }
 
   await fs.mkdir(outputDir, { recursive: true });
-
-  for (const targetDomain of targetDomains) {
-    for (const template of tools) {
-      const cmd = template
-        .replaceAll('{domain}', targetDomain)
-        .replaceAll('{output}', outputDir);
-      console.log(pc.yellow(`[+] Tool: ${cmd}`));
-      try {
-        await execPromise(cmd, { timeout: 600000, cwd: __dirname });
-      } catch (e) {
-        console.log(pc.red(`[!] Failed: ${e.message}`));
-      }
-    }
-  }
 
   const shellScript = path.join(__dirname, 'tools', 'run-subdomain-tools.sh');
   try {
@@ -217,7 +200,21 @@ async function runToolsForEngagement(engagement) {
       TARGET_DOMAINS: targetDomains.join(' '),
       OUTPUT_DIR: outputDir
     };
-    await execPromise(`bash "${shellScript}"`, { timeout: 900000, env });
+    await new Promise((resolve, reject) => {
+      const child = spawn('bash', [shellScript], {
+        cwd: __dirname,
+        env,
+        stdio: 'inherit'
+      });
+      child.once('error', reject);
+      child.once('close', (code, signal) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`Enumeration script exited with ${signal || code}`));
+        }
+      });
+    });
     console.log(pc.green(`[+] Shell script done for ${engagement.name}`));
   } catch (e) {
     console.log(pc.red(`[!] Built-in enumeration failed: ${e.message}`));
